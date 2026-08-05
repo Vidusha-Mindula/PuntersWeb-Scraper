@@ -8,9 +8,13 @@
     A fresh Id (a timestamp, generated automatically below) is what makes a new note show again
     even to someone who already dismissed an earlier one.
 
-    Usage:
-        powershell send-notice.ps1 -Title "Scheduled maintenance" -Message "Offline Friday 6-8pm AEST for a database upgrade."
-        powershell send-notice.ps1 -Clear   # removes the current notice; nothing shown on next check
+    Usage (prefer send-notice.bat day-to-day — same args, less typing):
+        .\send-notice.bat -Title "Scheduled maintenance" -Message "Offline Friday 6-8pm AEST for a database upgrade."
+        .\send-notice.bat -Clear   # removes the current notice; nothing shown on next check
+
+    Note the ".\" prefix above — PowerShell (the default shell in Windows Terminal/VS Code) never
+    searches the current folder for a script unless you qualify it that way; the bare filename
+    fails with "term ... is not recognized" even though the file is right there.
 #>
 param(
     [string]$Title,
