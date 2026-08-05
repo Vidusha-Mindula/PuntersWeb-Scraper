@@ -23,6 +23,7 @@ public sealed partial class MainViewModel : ObservableObject
     private bool _loadingSettings;
 
     private UpdateInfo? _pendingUpdate;
+    private CancellationTokenSource? _cts;
 
     public MainViewModel()
     {
@@ -63,6 +64,11 @@ public sealed partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private bool isBusy;
+
+    /// <summary>True while a cancellation has been requested but the scrape hasn't unwound yet —
+    /// disables the Stop button so a second click can't fire mid-teardown.</summary>
+    [ObservableProperty]
+    private bool isStopping;
 
     [ObservableProperty]
     private string statusText = "Ready.";
@@ -116,7 +122,25 @@ public sealed partial class MainViewModel : ObservableObject
     {
         ScrapeCommand.NotifyCanExecuteChanged();
         ExportJsonCommand.NotifyCanExecuteChanged();
+        StopCommand.NotifyCanExecuteChanged();
     }
+
+    partial void OnIsStoppingChanged(bool value) => StopCommand.NotifyCanExecuteChanged();
+
+    /// <summary>Cancels the running scrape. Takes effect at the next checkpoint the scraper
+    /// checks — typically within a few seconds, once the in-flight page navigation/settle
+    /// finishes — rather than instantly, since Playwright's own calls don't observe the token
+    /// directly.</summary>
+    [RelayCommand(CanExecute = nameof(CanStop))]
+    private void Stop()
+    {
+        if (!IsBusy || _cts is null) return;
+        IsStopping = true;
+        StatusText = "Stopping — finishing the current request...";
+        _cts.Cancel();
+    }
+
+    private bool CanStop() => IsBusy && !IsStopping;
 
     partial void OnDownloadFolderChanged(string value)
     {
@@ -240,7 +264,11 @@ public sealed partial class MainViewModel : ObservableObject
         var countryFilter = CountryCodeFilter.Trim();
         var courseFilter = CourseNameFilter.Trim();
 
+        _cts = new CancellationTokenSource();
+        var token = _cts.Token;
+
         IsBusy = true;
+        IsStopping = false;
         Meetings.Clear();
         _lastResults.Clear();
         _raceDetails.Clear();
@@ -260,14 +288,15 @@ public sealed partial class MainViewModel : ObservableObject
         try
         {
             await using IPuntersScraperService service = new PuntersScraperService();
-            await service.InitializeAsync(new ScraperOptions { Headless = Headless });
+            await service.InitializeAsync(new ScraperOptions { Headless = Headless }, token);
 
             foreach (var discipline in disciplines)
             {
+                token.ThrowIfCancellationRequested();
                 var rows = new List<MeetingRow>();
                 try
                 {
-                    var result = await service.ScrapeMeetingsAsync(discipline, date, progress: progress);
+                    var result = await service.ScrapeMeetingsAsync(discipline, date, progress: progress, cancellationToken: token);
 
                     // Apply the country/course filters right away, so nothing downstream
                     // (grid, race-detail scraping, export) ever sees or processes a meeting
@@ -299,7 +328,7 @@ public sealed partial class MainViewModel : ObservableObject
                         progress.Report($"[P-{discipline.Code()}] No meetings matched the country/course filter.");
                     }
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     var message = $"[P-{discipline.Code()}] Failed: {ex.Message}";
                     disciplineFailures.Add(message);
@@ -309,7 +338,8 @@ public sealed partial class MainViewModel : ObservableObject
 
                 foreach (var row in rows)
                 {
-                    var details = await service.ScrapeRacesForMeetingAsync(discipline, row.Meeting, progress);
+                    token.ThrowIfCancellationRequested();
+                    var details = await service.ScrapeRacesForMeetingAsync(discipline, row.Meeting, progress, token);
                     foreach (var detail in details)
                     {
                         if (detail.RaceId is null) continue;
@@ -371,6 +401,11 @@ public sealed partial class MainViewModel : ObservableObject
                 StatusText = "Finished, but no meetings matched for the selected date/discipline(s)/filters.";
             }
         }
+        catch (OperationCanceledException)
+        {
+            StatusText = $"Stopped by user. {Meetings.Count} meeting(s) loaded, " +
+                          $"{_raceDetails.Count} race(s) with full runner detail before stopping.";
+        }
         catch (Exception ex)
         {
             StatusText = $"Scrape failed: {ex.Message}";
@@ -378,6 +413,9 @@ public sealed partial class MainViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+            IsStopping = false;
+            _cts?.Dispose();
+            _cts = null;
         }
     }
 

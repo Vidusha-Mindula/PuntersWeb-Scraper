@@ -5,6 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:PuntersScraper.App"
         xmlns:vm="clr-namespace:PuntersScraper.App.ViewModels"
+        xmlns:components="clr-namespace:PuntersScraper.App.Components"
         mc:Ignorable="d"
         Title="Punters Meetings Scraper  ·  by VM" Height="700" Width="1080"
         MinHeight="540" MinWidth="880"
@@ -34,18 +35,8 @@
                 </StackPanel>
             </StackPanel>
 
-            <!-- Developer branding badge -->
-            <Border Grid.Column="1" VerticalAlignment="Center" CornerRadius="14" Padding="12,5"
-                    Background="{StaticResource ControlBrush}" BorderBrush="{StaticResource AccentBrush}" BorderThickness="1"
-                    ToolTip="Developed by VM">
-                <StackPanel Orientation="Horizontal">
-                    <Ellipse Width="8" Height="8" Fill="{StaticResource AccentBrush}" VerticalAlignment="Center" Margin="0,0,7,0" />
-                    <TextBlock VerticalAlignment="Center" FontSize="11.5" Foreground="{StaticResource SubtleTextBrush}">
-                        <Run Text="Developed by " />
-                        <Run Text="VM" FontWeight="Bold" Foreground="{StaticResource AccentHoverBrush}" />
-                    </TextBlock>
-                </StackPanel>
-            </Border>
+            <!-- Scraper mascot: stands still while idle, animates whenever a scrape is running -->
+            <components:ScraperBotIndicator Grid.Column="1" VerticalAlignment="Center" IsActive="{Binding IsBusy}" />
         </Grid>
 
         <!-- Update banner: hidden unless MainViewModel finds a newer GitHub release on startup -->
@@ -93,6 +84,8 @@
 
                     <Button Content="Scrape" Width="110" Style="{StaticResource PrimaryButton}" Command="{Binding ScrapeCommand}" Margin="0,0,10,0"
                             ToolTip="Scrapes meetings AND every race's full runner/jockey/form detail for the selected discipline(s), date, and filters — one click, everything." />
+                    <Button Content="Stop" Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding StopCommand}" Margin="0,0,10,0"
+                            ToolTip="Cancels the running scrape as soon as the current in-flight request finishes." />
                     <Button Content="Export JSON..." Width="140" Style="{StaticResource SecondaryButton}" Command="{Binding ExportJsonCommand}"
                             ToolTip="Saves one folder per meeting, each containing that meeting's file plus a DataDump file for every scraped race." />
                 </StackPanel>
@@ -118,8 +111,11 @@
                              ToolTip="S3 access key. Remembered across app restarts (stored locally, never in source control)." />
 
                     <TextBlock Text="Secret Key" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
-                    <TextBox Text="{Binding S3SecretKey, UpdateSourceTrigger=PropertyChanged}" Width="140"
+                    <TextBox Text="{Binding S3SecretKey, UpdateSourceTrigger=PropertyChanged}" Width="140" Margin="0,0,24,0"
                              ToolTip="S3 secret key. Remembered across app restarts (stored locally, never in source control)." />
+
+                    <Button Content="Manage Bucket..." Width="130" Style="{StaticResource SecondaryButton}" Click="ManageBucket_Click"
+                            ToolTip="Browse and delete files already uploaded to the configured S3 bucket." />
                 </StackPanel>
             </StackPanel>
         </Border>
