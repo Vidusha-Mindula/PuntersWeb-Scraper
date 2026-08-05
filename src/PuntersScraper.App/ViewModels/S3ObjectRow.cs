@@ -14,20 +14,8 @@ public sealed partial class S3ObjectRow : ObservableObject
     public string SizeDisplay => FormatSize(Size);
     public string LastModifiedDisplay => LastModifiedUtc.ToString("yyyy-MM-dd HH:mm:ss");
 
-    /// <summary>Everything before the key's last '/', used to group the grid by folder instead of
-    /// listing every object in one flat list — S3 has no real folders, just key prefixes, but
-    /// this uploader's own keys are already structured that way (e.g. "pending/T-...-meeting.json").</summary>
-    public string FolderPath
-    {
-        get
-        {
-            var idx = Key.LastIndexOf('/');
-            return idx < 0 ? "(root)" : Key[..idx];
-        }
-    }
-
-    /// <summary>Just the filename — shown in the grid instead of the full key, since the folder
-    /// is already the group header.</summary>
+    /// <summary>Just the filename — shown in the grid instead of the full key, since every row is
+    /// already known to be under the "pending" folder (see S3BucketService.PendingFolder).</summary>
     public string FileName
     {
         get
