@@ -57,7 +57,10 @@ Filename: "powershell.exe"; \
     Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\playwright.ps1"" install chromium"; \
     StatusMsg: "Downloading the Chromium browser used for scraping (this needs an internet connection and can take a minute)..."; \
     Flags: runhidden waituntilterminated
-Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
+; No "skipifsilent" here on purpose: the in-app updater runs this installer with /SILENT (see
+; UpdateChecker.LaunchInstaller), and the whole point of that flow is that the app comes back up
+; on its own afterward with zero clicks - skipifsilent would suppress exactly that relaunch.
+Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall
 
 [Code]
 // Seeds a default settings.json (same shape AppSettings.cs itself saves) so a fresh install

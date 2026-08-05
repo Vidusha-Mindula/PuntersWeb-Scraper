@@ -136,15 +136,21 @@ public static class UpdateChecker
         return path;
     }
 
-    /// <summary>Launches the downloaded installer with shell execute (so Windows shows the normal
-    /// UAC/SmartScreen prompt, same as double-clicking it) — the installer itself asks to close
-    /// the running app before it overwrites files, but the caller should still shut down right
-    /// after this to avoid the file-lock conflict.</summary>
+    /// <summary>Launches the downloaded installer fully unattended — no wizard pages, no "Next"/
+    /// "Install"/"Finish" clicks required. /SILENT shows a single progress window with no
+    /// interaction (so it's still visible that something's happening) rather than /VERYSILENT's
+    /// zero UI. /CLOSEAPPLICATIONS tells Inno Setup to close whatever process has this app's files
+    /// locked automatically via Windows' Restart Manager, as a safety net in case the caller's own
+    /// Application.Current.Shutdown() (called right after this) hasn't fully finished tearing down
+    /// yet. The installer's own [Run] section relaunches the app once it's done (see
+    /// PuntersScraper.iss — that entry deliberately has no "skipifsilent", so it still fires here).
+    /// PrivilegesRequired=lowest in the .iss means no UAC prompt either way.</summary>
     public static void LaunchInstaller(string path)
     {
         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
         {
             FileName = path,
+            Arguments = "/SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /NORESTARTAPPLICATIONS",
             UseShellExecute = true
         });
     }

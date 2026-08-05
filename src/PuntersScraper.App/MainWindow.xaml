@@ -9,6 +9,7 @@
         mc:Ignorable="d"
         Title="Punters Meetings Scraper  ·  by VM" Height="700" Width="1080"
         MinHeight="540" MinWidth="880"
+        Icon="app.ico"
         Background="{StaticResource BgBrush}">
     <Grid Margin="16">
         <Grid.RowDefinitions>
@@ -62,7 +63,7 @@
                            Foreground="{StaticResource AccentHoverBrush}" FontWeight="SemiBold" />
                 <Button Grid.Row="0" Grid.Column="1" Content="{Binding UpdateButtonText}" Width="150" Style="{StaticResource PrimaryButton}"
                         Command="{Binding UpdateNowCommand}"
-                        ToolTip="Downloads the new installer and runs it — this app closes automatically so the installer can update its files." />
+                        ToolTip="Downloads the installer and installs it silently — no wizard clicks needed. This app closes automatically and reopens on its own once the update finishes." />
 
                 <!-- Only shown while the installer is actually downloading — a real percentage
                      (or, if the server sent no Content-Length, a moving indeterminate sweep) so
