@@ -1,0 +1,125 @@
+using System.IO;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text.Json;
+
+namespace PuntersScraper.App.Services;
+
+/// <summary>A newer build found on GitHub Releases.</summary>
+public sealed record UpdateInfo(Version Version, string DownloadUrl, string ReleaseUrl);
+
+/// <summary>
+/// Checks GitHub Releases for a build newer than the one currently running, using the public
+/// "latest release" API — no custom manifest to host, GitHub's own release metadata (tag_name +
+/// assets[].browser_download_url) is the manifest. Matches the installer's own naming
+/// (PuntersScraperSetup-{version}.exe, from installer/PuntersScraper.iss) to find the right asset.
+///
+/// Only works once RepoOwner/RepoName below point at a real GitHub repo with at least one
+/// release whose asset is the Inno Setup installer built by installer/build-punters-installer.ps1
+/// (tag the release e.g. "v2.6.0" and attach the matching PuntersScraperSetup-2.6.0.exe).
+/// A private repo needs an Authorization: Bearer &lt;token&gt; header added to the request below —
+/// the public endpoint used here only works for public repos.
+/// </summary>
+public static class UpdateChecker
+{
+    private const string RepoOwner = "Vidusha-Mindula";
+    private const string RepoName = "PuntersWeb-Scraper";
+
+    private const string AssetNamePrefix = "PuntersScraperSetup-";
+    private const string AssetNameSuffix = ".exe";
+
+    private static Version? CurrentVersion =>
+        System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+
+    public static bool IsConfigured => RepoOwner != "REPLACE_ME" && RepoName != "REPLACE_ME";
+
+    /// <summary>Returns the newer release's info, or null if this is already the latest version,
+    /// the repo isn't configured yet, or the check failed for any reason (offline, rate-limited,
+    /// no releases yet) — a failed background check should never block startup or bother the user.</summary>
+    public static async Task<UpdateInfo?> CheckAsync(CancellationToken cancellationToken = default)
+    {
+        if (!IsConfigured) return null;
+
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("PuntersScraper.App", "1.0"));
+            http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+
+            var url = $"https://api.github.com/repos/{RepoOwner}/{RepoName}/releases/latest";
+            using var response = await http.GetAsync(url, cancellationToken);
+            if (!response.IsSuccessStatusCode) return null;
+
+            using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+            var root = doc.RootElement;
+
+            var tag = root.TryGetProperty("tag_name", out var tagProp) ? tagProp.GetString() : null;
+            if (tag is null) return null;
+
+            if (!Version.TryParse(tag.TrimStart('v', 'V'), out var latestVersion)) return null;
+
+            var current = CurrentVersion;
+            if (current is not null && latestVersion <= current) return null;
+
+            if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
+                return null;
+
+            string? downloadUrl = null;
+            foreach (var asset in assets.EnumerateArray())
+            {
+                var name = asset.TryGetProperty("name", out var nameProp) ? nameProp.GetString() : null;
+                if (name is null) continue;
+                if (!name.StartsWith(AssetNamePrefix, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!name.EndsWith(AssetNameSuffix, StringComparison.OrdinalIgnoreCase)) continue;
+
+                downloadUrl = asset.TryGetProperty("browser_download_url", out var urlProp) ? urlProp.GetString() : null;
+                break;
+            }
+
+            if (downloadUrl is null) return null;
+
+            var releaseUrl = root.TryGetProperty("html_url", out var htmlProp) ? htmlProp.GetString() ?? downloadUrl : downloadUrl;
+            return new UpdateInfo(latestVersion, downloadUrl, releaseUrl);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Downloads the installer .exe to a temp file. Caller is expected to launch it
+    /// (<see cref="LaunchInstaller"/>) and then shut the running app down so the installer can
+    /// overwrite its files.</summary>
+    public static async Task<string> DownloadInstallerAsync(string downloadUrl, CancellationToken cancellationToken = default)
+    {
+        using var http = new HttpClient();
+        http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("PuntersScraper.App", "1.0"));
+
+        var fileName = downloadUrl.Split('/').Last();
+        var path = Path.Combine(Path.GetTempPath(), fileName);
+
+        using var response = await http.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        await using (var fs = File.Create(path))
+        {
+            await response.Content.CopyToAsync(fs, cancellationToken);
+        }
+
+        return path;
+    }
+
+    /// <summary>Launches the downloaded installer with shell execute (so Windows shows the normal
+    /// UAC/SmartScreen prompt, same as double-clicking it) — the installer itself asks to close
+    /// the running app before it overwrites files, but the caller should still shut down right
+    /// after this to avoid the file-lock conflict.</summary>
+    public static void LaunchInstaller(string path)
+    {
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = path,
+            UseShellExecute = true
+        });
+    }
+}

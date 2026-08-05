@@ -1,0 +1,184 @@
+@* Small animated "bot" mascot shown in the header in place of the old "Developed by VM" badge.
+   Stands still while idle; comes alive (bobbing/blinking/scanning) whenever a scrape is running,
+   so it doubles as an always-visible busy indicator without taking up its own extra space. *@
+
+<div class="sb-wrap @(IsActive ? "sb-active" : "sb-idle")" title="@(IsActive ? "Scraping in progress..." : "Scraper idle")">
+    <svg viewBox="0 0 220 230" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <linearGradient id="sbHeadGrad" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#a9e8c4" />
+                <stop offset="100%" stop-color="#3fae6f" />
+            </linearGradient>
+            <linearGradient id="sbBodyGrad" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#3fae6f" />
+                <stop offset="100%" stop-color="#1f6b40" />
+            </linearGradient>
+            <clipPath id="sbFaceClip">
+                <ellipse cx="110" cy="95" rx="58" ry="45" />
+            </clipPath>
+        </defs>
+
+        <line x1="150" y1="20" x2="168" y2="-8" stroke="#7dffb0" stroke-width="5" stroke-linecap="round" />
+        <circle class="sb-antenna-dot" cx="168" cy="-8" r="6" fill="#7dffb0" />
+
+        <ellipse cx="46" cy="98" rx="14" ry="18" fill="url(#sbHeadGrad)" />
+        <ellipse cx="174" cy="98" rx="14" ry="18" fill="url(#sbHeadGrad)" />
+
+        <ellipse cx="110" cy="95" rx="80" ry="72" fill="url(#sbHeadGrad)" />
+
+        <ellipse cx="110" cy="98" rx="58" ry="45" fill="#155c33" />
+
+        <g clip-path="url(#sbFaceClip)">
+            <rect class="sb-scanline" x="52" y="70" width="116" height="4" fill="#7dffb0" opacity="0" />
+        </g>
+
+        <ellipse class="sb-eye" cx="88" cy="92" rx="9" ry="16" fill="#7dffb0" />
+        <ellipse class="sb-eye sb-eye-right" cx="132" cy="92" rx="9" ry="16" fill="#7dffb0" />
+
+        <path d="M 92 122 Q 110 140 128 122 L 128 122 Q 110 128 92 122 Z" fill="#eafff2" />
+
+        <path d="M 165 90 Q 190 100 178 130 L 150 138" fill="none" stroke="#7dffb0" stroke-width="5" stroke-linecap="round" />
+        <circle class="sb-mic-tip" cx="150" cy="138" r="6" fill="#7dffb0" />
+
+        <ellipse class="sb-arm sb-arm-left" cx="55" cy="185" rx="20" ry="34" fill="url(#sbBodyGrad)" transform="rotate(-25 55 185)" />
+        <ellipse class="sb-arm sb-arm-right" cx="165" cy="185" rx="20" ry="34" fill="url(#sbBodyGrad)" transform="rotate(25 165 185)" />
+
+        <path d="M 70 175 Q 70 155 110 155 Q 150 155 150 175 L 150 205 Q 150 225 110 225 Q 70 225 70 205 Z" fill="url(#sbBodyGrad)" />
+        <circle class="sb-chest-light" cx="110" cy="180" r="7" fill="#7dffb0" />
+
+        <ellipse cx="110" cy="222" rx="16" ry="10" fill="#1f6b40" />
+    </svg>
+    @if (IsActive)
+    {
+        <span class="sb-label">Scraping<span class="sb-dots"><span>.</span><span>.</span><span>.</span></span></span>
+    }
+</div>
+
+<style>
+    .sb-wrap {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        overflow: visible;
+    }
+
+    .sb-wrap svg {
+        width: 34px;
+        height: 36px;
+        overflow: visible;
+        flex-shrink: 0;
+    }
+
+    .sb-idle svg {
+        filter: saturate(0.5) brightness(0.85);
+    }
+
+    .sb-label {
+        color: var(--subtle);
+        font-size: 11.5px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+    }
+
+    .sb-dots span {
+        animation: sbDotFade 1.4s infinite;
+        opacity: 0;
+    }
+
+    .sb-dots span:nth-child(1) { animation-delay: 0s; }
+    .sb-dots span:nth-child(2) { animation-delay: .2s; }
+    .sb-dots span:nth-child(3) { animation-delay: .4s; }
+
+    @@keyframes sbDotFade {
+        0%, 100% { opacity: 0; }
+        50% { opacity: 1; }
+    }
+
+    /* Everything below only actually animates under .sb-active — while idle the bot just stands
+       still rather than looping forever in the background. */
+    .sb-active {
+        animation: sbBob 2.6s ease-in-out infinite;
+    }
+
+    @@keyframes sbBob {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-3px); }
+    }
+
+    .sb-active .sb-antenna-dot {
+        animation: sbPulseGlow 1.4s ease-in-out infinite;
+        transform-origin: center;
+    }
+
+    @@keyframes sbPulseGlow {
+        0%, 100% { filter: drop-shadow(0 0 1px #7dffb0); }
+        50% { filter: drop-shadow(0 0 5px #7dffb0); }
+    }
+
+    .sb-active .sb-eye {
+        transform-origin: center;
+        animation: sbBlink 3.2s ease-in-out infinite;
+    }
+
+    .sb-active .sb-eye-right {
+        animation-delay: .05s;
+    }
+
+    @@keyframes sbBlink {
+        0%, 88%, 100% { transform: scaleY(1); }
+        92% { transform: scaleY(0.08); }
+        96% { transform: scaleY(1); }
+    }
+
+    .sb-active .sb-scanline {
+        animation: sbScan 2.2s ease-in-out infinite;
+    }
+
+    @@keyframes sbScan {
+        0% { transform: translateY(-14px); opacity: 0; }
+        50% { opacity: 1; }
+        100% { transform: translateY(14px); opacity: 0; }
+    }
+
+    .sb-active .sb-mic-tip {
+        animation: sbMicGlow 1.8s ease-in-out infinite;
+    }
+
+    @@keyframes sbMicGlow {
+        0%, 100% { filter: drop-shadow(0 0 1px #7dffb0); }
+        50% { filter: drop-shadow(0 0 4px #7dffb0); }
+    }
+
+    .sb-active .sb-chest-light {
+        animation: sbChestPulse 1.4s ease-in-out infinite;
+    }
+
+    @@keyframes sbChestPulse {
+        0%, 100% { opacity: .5; }
+        50% { opacity: 1; }
+    }
+
+    .sb-active .sb-arm {
+        transform-origin: top center;
+    }
+
+    .sb-active .sb-arm-left { animation: sbSwayL 2.6s ease-in-out infinite; }
+    .sb-active .sb-arm-right { animation: sbSwayR 2.6s ease-in-out infinite; }
+
+    @@keyframes sbSwayL {
+        0%, 100% { transform: rotate(0deg); }
+        50% { transform: rotate(-4deg); }
+    }
+
+    @@keyframes sbSwayR {
+        0%, 100% { transform: rotate(0deg); }
+        50% { transform: rotate(4deg); }
+    }
+</style>
+
+@code {
+    /// <summary>Whether the mascot should be actively animating (a scrape is running) or just
+    /// standing still as idle header branding.</summary>
+    [Parameter] public bool IsActive { get; set; }
+}

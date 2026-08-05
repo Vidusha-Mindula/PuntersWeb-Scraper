@@ -1,0 +1,43 @@
+@page "/login"
+@attribute [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+@layout Layout.EmptyLayout
+
+<PageTitle>Log in — Punters Meetings Scraper</PageTitle>
+
+<div class="login-page">
+    <div class="login-card">
+        <h1>Punters Meetings Scraper</h1>
+        <p class="subtitle">Sign in to scrape meetings from this shared instance.</p>
+
+        @if (HasError)
+        {
+            <p class="login-error">Incorrect username or password.</p>
+        }
+
+        <form method="post" action="/account/login" data-enhance="false">
+            <input type="hidden" name="returnUrl" value="@ReturnUrl" />
+
+            <label>
+                Username
+                <input type="text" name="username" autocomplete="username" required />
+            </label>
+
+            <label>
+                Password
+                <input type="password" name="password" autocomplete="current-password" required />
+            </label>
+
+            <button type="submit">Log in</button>
+        </form>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery]
+    public string? ReturnUrl { get; set; }
+
+    [SupplyParameterFromQuery(Name = "error")]
+    public string? ErrorFlag { get; set; }
+
+    private bool HasError => ErrorFlag == "1";
+}

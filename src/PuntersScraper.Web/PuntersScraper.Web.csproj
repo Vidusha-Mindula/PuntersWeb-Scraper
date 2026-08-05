@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Runs with no visible console window (Task Scheduler launches this in an interactive
+         session for the off-screen-browser requirement, but the app itself doesn't need a
+         terminal window popping up in that session). -->
+    <OutputType>WinExe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PuntersScraper.Core\PuntersScraper.Core.csproj" />
+    <ProjectReference Include="..\PuntersScraper.Shared\PuntersScraper.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AWSSDK.S3" Version="3.7.416.1" />
+  </ItemGroup>
+
+</Project>

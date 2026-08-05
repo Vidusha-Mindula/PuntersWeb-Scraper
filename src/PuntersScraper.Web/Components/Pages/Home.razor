@@ -1,0 +1,188 @@
+@page "/"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@inject PuntersScraper.Web.Services.ScrapeSessionService Session
+@implements IDisposable
+
+<PageTitle>Punters Meetings Scraper</PageTitle>
+
+<div class="panel">
+    <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px;">
+        <label>
+            Date
+            <input type="date" @bind="SelectedDate" />
+        </label>
+
+        <label style="flex-direction:row; align-items:center; gap:6px;">
+            <input type="checkbox" @bind="ScrapeHorses" /> Horses (T)
+        </label>
+        <label style="flex-direction:row; align-items:center; gap:6px;">
+            <input type="checkbox" @bind="ScrapeGreyhounds" /> Greyhounds (G)
+        </label>
+        <label style="flex-direction:row; align-items:center; gap:6px;">
+            <input type="checkbox" @bind="ScrapeHarness" /> Harness (H)
+        </label>
+    </div>
+
+    <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px;">
+        <label>
+            Country (ISO2)
+            <input type="text" @bind="CountryCodeFilter" placeholder="e.g. AU" style="width:80px;" />
+        </label>
+        <label>
+            Course name
+            <input type="text" @bind="CourseNameFilter" placeholder="e.g. Sandown" style="width:200px;" />
+        </label>
+
+        <button @onclick="RunScrapeAsync" disabled="@Session.IsBusy">Scrape</button>
+        <button type="button" class="secondary" @onclick="Session.RequestStop" disabled="@(!Session.IsBusy || Session.IsStopping)">
+            @(Session.IsStopping ? "Stopping..." : "Stop")
+        </button>
+    </div>
+
+    <p style="font-size:12px;color:var(--subtle);max-width:640px;">
+        Runs a real (non-headless) browser positioned off-screen — the only mode that reliably
+        gets past Punters' bot-detection — so this server needs an actual display surface
+        available (a logged-in Windows session, or an Xvfb virtual display on Linux).
+    </p>
+</div>
+
+<div class="panel">
+    <h2 style="font-size:15px;">Export</h2>
+    <div style="display:flex; gap:20px; flex-wrap:wrap; align-items:flex-end;">
+        <a href="/download-zip" class="@(Session.CanExport ? "" : "disabled-link")"
+           style="@(Session.CanExport ? "" : "pointer-events:none;opacity:0.45;")">
+            <button type="button" class="secondary">Download ZIP</button>
+        </a>
+
+        <label style="flex-direction:row; align-items:center; gap:6px;">
+            <input type="checkbox" checked="@Settings.UploadToS3" @onchange="OnUploadToS3Changed" /> Also upload to S3
+        </label>
+        <label>
+            Bucket
+            <input type="text" value="@Settings.S3BucketName" @onchange="OnBucketChanged" style="width:200px;" />
+        </label>
+        <label>
+            Folder
+            <input type="text" value="@Settings.S3Folder" @onchange="OnFolderChanged" style="width:140px;" />
+        </label>
+        <label>
+            Access Key
+            <input type="text" value="@Settings.S3AccessKey" @onchange="OnAccessKeyChanged" style="width:200px;" />
+        </label>
+        <label>
+            Secret Key
+            <input type="password" value="@Settings.S3SecretKey" @onchange="OnSecretKeyChanged" style="width:200px;" />
+        </label>
+    </div>
+    <p style="font-size:12px;color:var(--subtle);margin-top:8px;">
+        "Download ZIP" always builds the same per-meeting folder structure TroyenRaceIngestor expects.
+        If "Also upload to S3" is checked, every file is uploaded to the bucket/folder above — both when you
+        click Download ZIP, and automatically the moment a scrape finishes (no click needed).
+    </p>
+</div>
+
+<div class="panel">
+    <table>
+        <thead>
+            <tr>
+                <th>Discipline</th><th>Group</th><th>Meeting</th><th>State</th><th>Country</th>
+                <th>Races</th><th>Detail</th><th>First Race</th><th>Track</th><th>Stage</th><th style="width:130px;">Progress</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var row in Session.Meetings.ToList())
+            {
+                <tr>
+                    <td>@row.Discipline</td>
+                    <td>@row.Group</td>
+                    <td>@row.MeetingName</td>
+                    <td>@row.State</td>
+                    <td>@row.Country</td>
+                    <td>@row.RaceCount</td>
+                    <td>@row.RacesWithDetail</td>
+                    <td>@row.FirstRaceLocalTime</td>
+                    <td>@row.TrackCondition</td>
+                    <td>@row.MeetingStage</td>
+                    <td>
+                        <div class="progress-track" title="@row.ProgressPercent%">
+                            <div class="progress-fill" style="width:@(row.ProgressPercent)%;"></div>
+                        </div>
+                        <span class="progress-label">@row.ProgressPercent%</span>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+<div class="status-bar">
+    <span>@Session.StatusText</span>
+    @if (Session.IsBusy)
+    {
+        <span class="spinner"></span>
+    }
+</div>
+
+@code {
+    private DateOnly SelectedDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+    private bool ScrapeHorses { get; set; } = true;
+    private bool ScrapeGreyhounds { get; set; } = true;
+    private bool ScrapeHarness { get; set; } = true;
+    private string CountryCodeFilter { get; set; } = "";
+    private string CourseNameFilter { get; set; } = "";
+
+    private PuntersScraper.Web.Services.WebAppSettings Settings = PuntersScraper.Web.Services.WebAppSettings.Load();
+
+    protected override void OnInitialized()
+    {
+        Session.Changed += OnSessionChanged;
+    }
+
+    private void OnSessionChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task RunScrapeAsync()
+    {
+        var disciplines = new List<PuntersScraper.Shared.Models.Discipline>();
+        if (ScrapeHorses) disciplines.Add(PuntersScraper.Shared.Models.Discipline.Horses);
+        if (ScrapeGreyhounds) disciplines.Add(PuntersScraper.Shared.Models.Discipline.Greyhounds);
+        if (ScrapeHarness) disciplines.Add(PuntersScraper.Shared.Models.Discipline.Harness);
+
+        await Session.ScrapeAsync(disciplines, SelectedDate, CountryCodeFilter.Trim(), CourseNameFilter.Trim());
+    }
+
+    private void OnUploadToS3Changed(ChangeEventArgs e)
+    {
+        Settings.UploadToS3 = e.Value is bool b && b;
+        Settings.Save();
+    }
+
+    private void OnBucketChanged(ChangeEventArgs e)
+    {
+        Settings.S3BucketName = e.Value?.ToString() ?? Settings.S3BucketName;
+        Settings.Save();
+    }
+
+    private void OnFolderChanged(ChangeEventArgs e)
+    {
+        Settings.S3Folder = e.Value?.ToString() ?? Settings.S3Folder;
+        Settings.Save();
+    }
+
+    private void OnAccessKeyChanged(ChangeEventArgs e)
+    {
+        Settings.S3AccessKey = e.Value?.ToString() ?? Settings.S3AccessKey;
+        Settings.Save();
+    }
+
+    private void OnSecretKeyChanged(ChangeEventArgs e)
+    {
+        Settings.S3SecretKey = e.Value?.ToString() ?? Settings.S3SecretKey;
+        Settings.Save();
+    }
+
+    public void Dispose()
+    {
+        Session.Changed -= OnSessionChanged;
+    }
+}

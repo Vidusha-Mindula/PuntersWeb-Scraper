@@ -1,0 +1,174 @@
+@page "/bucket"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@inject IJSRuntime JS
+
+<PageTitle>Punters Meetings Scraper — Bucket</PageTitle>
+
+<div class="panel">
+    <h2 style="font-size:15px;">S3 Bucket</h2>
+    <p style="font-size:12px;color:var(--subtle);max-width:640px;margin-top:0;">
+        Browse and delete files already uploaded to <strong>@Settings.S3BucketName</strong>
+        (folder: <strong>@(string.IsNullOrEmpty(Settings.S3Folder) ? "/" : Settings.S3Folder)</strong>).
+        Deleting a file here removes it from S3 permanently — this cannot be undone.
+    </p>
+
+    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
+        <button type="button" class="secondary" @onclick="LoadAsync" disabled="@IsBusy">Refresh</button>
+        <button type="button" @onclick="DeleteSelectedAsync" disabled="@(IsBusy || SelectedKeys.Count == 0)">
+            Delete selected (@SelectedKeys.Count)
+        </button>
+        <span style="font-size:12px;color:var(--subtle);">@StatusText</span>
+        @if (IsBusy)
+        {
+            <span class="spinner"></span>
+        }
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th style="width:32px;">
+                    <input type="checkbox" checked="@AllSelected" @onchange="ToggleSelectAll" disabled="@IsBusy" />
+                </th>
+                <th>Key</th>
+                <th style="width:100px;">Size</th>
+                <th style="width:170px;">Last modified (UTC)</th>
+                <th style="width:70px;"></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var obj in Objects)
+            {
+                <tr>
+                    <td>
+                        <input type="checkbox" checked="@SelectedKeys.Contains(obj.Key)"
+                               @onchange="e => ToggleOne(obj.Key, e.Value is bool b && b)" disabled="@IsBusy" />
+                    </td>
+                    <td style="word-break:break-all;">@obj.Key</td>
+                    <td>@FormatSize(obj.Size)</td>
+                    <td>@obj.LastModifiedUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                    <td>
+                        <button type="button" class="secondary" @onclick="() => DeleteOneAsync(obj.Key)" disabled="@IsBusy">
+                            Delete
+                        </button>
+                    </td>
+                </tr>
+            }
+            @if (!IsBusy && Objects.Count == 0)
+            {
+                <tr><td colspan="5" style="color:var(--subtle);">No files in this bucket yet.</td></tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    private PuntersScraper.Web.Services.WebAppSettings Settings = PuntersScraper.Web.Services.WebAppSettings.Load();
+    private List<PuntersScraper.Web.Services.S3ObjectInfo> Objects { get; set; } = new();
+    private HashSet<string> SelectedKeys { get; } = new();
+    private bool IsBusy { get; set; }
+    private string StatusText { get; set; } = "";
+
+    private bool AllSelected => Objects.Count > 0 && SelectedKeys.Count == Objects.Count;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        IsBusy = true;
+        StatusText = "Loading...";
+        StateHasChanged();
+        try
+        {
+            Settings = PuntersScraper.Web.Services.WebAppSettings.Load();
+            Objects = await PuntersScraper.Web.Services.S3BucketService.ListObjectsAsync(Settings);
+            SelectedKeys.Clear();
+            StatusText = $"{Objects.Count} file(s).";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Failed to list bucket: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private void ToggleSelectAll(ChangeEventArgs e)
+    {
+        var check = e.Value is bool b && b;
+        SelectedKeys.Clear();
+        if (check)
+        {
+            foreach (var obj in Objects) SelectedKeys.Add(obj.Key);
+        }
+    }
+
+    private void ToggleOne(string key, bool selected)
+    {
+        if (selected) SelectedKeys.Add(key);
+        else SelectedKeys.Remove(key);
+    }
+
+    private async Task DeleteOneAsync(string key)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"Delete '{key}' from the bucket? This cannot be undone."))
+            return;
+
+        await DeleteKeysAsync(new[] { key });
+    }
+
+    private async Task DeleteSelectedAsync()
+    {
+        var keys = SelectedKeys.ToList();
+        if (keys.Count == 0) return;
+
+        if (!await JS.InvokeAsync<bool>("confirm", $"Delete {keys.Count} file(s) from the bucket? This cannot be undone."))
+            return;
+
+        await DeleteKeysAsync(keys);
+    }
+
+    private async Task DeleteKeysAsync(IReadOnlyList<string> keys)
+    {
+        IsBusy = true;
+        StatusText = $"Deleting {keys.Count} file(s)...";
+        StateHasChanged();
+        try
+        {
+            var (deleted, errors) = await PuntersScraper.Web.Services.S3BucketService.DeleteObjectsAsync(Settings, keys);
+            Objects = Objects.Where(o => !keys.Contains(o.Key) || errors.Any(err => err.StartsWith(o.Key + ":"))).ToList();
+            foreach (var key in keys) SelectedKeys.Remove(key);
+
+            StatusText = errors.Count > 0
+                ? $"Deleted {deleted} file(s). {errors.Count} failed: {string.Join(" | ", errors)}"
+                : $"Deleted {deleted} file(s).";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Delete failed: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        string[] units = { "B", "KB", "MB", "GB" };
+        double size = bytes;
+        var unit = 0;
+        while (size >= 1024 && unit < units.Length - 1)
+        {
+            size /= 1024;
+            unit++;
+        }
+        return $"{size:0.#} {units[unit]}";
+    }
+}

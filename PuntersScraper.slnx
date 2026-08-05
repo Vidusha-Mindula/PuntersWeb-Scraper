@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PuntersScraper.App/PuntersScraper.App.csproj" />
+    <Project Path="src/PuntersScraper.Core/PuntersScraper.Core.csproj" />
+    <Project Path="src/PuntersScraper.Shared/PuntersScraper.Shared.csproj" />
+    <Project Path="src/PuntersScraper.Web/PuntersScraper.Web.csproj" />
+  </Folder>
+</Solution>

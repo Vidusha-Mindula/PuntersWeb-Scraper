@@ -1,0 +1,114 @@
+@inherits LayoutComponentBase
+@inject PuntersScraper.Web.Services.ScrapeSessionService Session
+@implements IDisposable
+
+<div class="app-shell">
+    <header class="app-header">
+        <div class="app-header__title">
+            <span class="app-header__accent-bar"></span>
+            <div>
+                <h1 style="font-size:19px;">Punters Meetings Scraper</h1>
+                <div style="font-size:11.5px;color:var(--subtle);">Horses · Greyhounds · Harness — meetings and full race detail</div>
+            </div>
+        </div>
+        <div class="app-header__right">
+            <nav class="app-nav">
+                <NavLink href="/" Match="Microsoft.AspNetCore.Components.Routing.NavLinkMatch.All">Scraper</NavLink>
+                <NavLink href="/bucket">Bucket</NavLink>
+            </nav>
+            <ScraperBotLoader IsActive="@Session.IsBusy" />
+            <form method="post" action="/account/logout" data-enhance="false">
+                <button type="submit" class="secondary">Log out</button>
+            </form>
+        </div>
+    </header>
+
+    <main class="app-content">
+        @Body
+    </main>
+</div>
+
+<div id="blazor-error-ui">
+    An unhandled error has occurred.
+    <a href="" class="reload">Reload</a>
+    <a class="dismiss">🗙</a>
+</div>
+
+<style>
+    .app-shell {
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+    }
+
+    .app-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 24px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .app-header__title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .app-header__accent-bar {
+        width: 8px;
+        height: 28px;
+        border-radius: 4px;
+        background: var(--accent);
+        display: inline-block;
+    }
+
+    .app-header__right {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+    }
+
+    .app-nav {
+        display: flex;
+        gap: 4px;
+    }
+
+    .app-nav a {
+        color: var(--subtle);
+        text-decoration: none;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 6px 12px;
+        border-radius: 6px;
+    }
+
+    .app-nav a:hover {
+        background: var(--control-hover);
+        color: var(--text);
+    }
+
+    .app-nav a.active {
+        background: var(--control);
+        color: var(--accent-hover);
+    }
+
+    .app-content {
+        flex: 1;
+        padding: 16px 24px 24px 24px;
+    }
+</style>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Session.Changed += OnSessionChanged;
+    }
+
+    private void OnSessionChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Session.Changed -= OnSessionChanged;
+    }
+}
