@@ -2,9 +2,11 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:PuntersScraper.App"
+             xmlns:converters="clr-namespace:PuntersScraper.App.Converters"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <converters:ProgressToWidthConverter x:Key="ProgressToWidthConverter" />
 
         <!-- ===================== Dark theme palette (green accent, matching Punters'
              own site branding) ===================== -->
@@ -381,8 +383,21 @@
                     <ControlTemplate TargetType="ProgressBar">
                         <Grid x:Name="Root" ClipToBounds="True">
                             <Border CornerRadius="4" Background="{TemplateBinding Background}" />
+                            <!-- Width is computed explicitly via ProgressToWidthConverter rather than
+                                 relying on WPF's usual "PART_Track" automatic indicator-sizing, which
+                                 this template doesn't provide a PART_Track for (this is also used for
+                                 the indeterminate spinner look below, which overrides Width itself). -->
                             <Border x:Name="PART_Indicator" CornerRadius="4" Background="{TemplateBinding Foreground}"
-                                    HorizontalAlignment="Left" Width="0" />
+                                    HorizontalAlignment="Left">
+                                <Border.Width>
+                                    <MultiBinding Converter="{StaticResource ProgressToWidthConverter}">
+                                        <Binding Path="Value" RelativeSource="{RelativeSource TemplatedParent}" />
+                                        <Binding Path="Minimum" RelativeSource="{RelativeSource TemplatedParent}" />
+                                        <Binding Path="Maximum" RelativeSource="{RelativeSource TemplatedParent}" />
+                                        <Binding Path="ActualWidth" RelativeSource="{RelativeSource AncestorType=ProgressBar}" />
+                                    </MultiBinding>
+                                </Border.Width>
+                            </Border>
                             <Border x:Name="Sweep" CornerRadius="4" HorizontalAlignment="Left" Width="70" Opacity="0">
                                 <Border.Background>
                                     <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">

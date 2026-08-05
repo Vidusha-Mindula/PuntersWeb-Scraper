@@ -382,27 +382,43 @@ public sealed partial class MainViewModel : ObservableObject
                 {
                     token.ThrowIfCancellationRequested();
 
-                    // Scraped one race at a time (rather than via ScrapeRacesForMeetingAsync,
-                    // which only returns once the whole meeting is done) so row.RacesProcessed —
-                    // and so the row's progress bar — advances live as each race finishes, instead
-                    // of jumping straight from 0% to 100%.
-                    foreach (var raceEvent in row.Meeting.Events)
+                    // Up to MaxConcurrentRaces races scraped at once instead of strictly one at a
+                    // time - each still opens/closes its own Playwright page (ScrapeRaceAsync),
+                    // so this is safe to run concurrently, and it's the single biggest speed lever
+                    // available without touching the settle-delay/full-form-wait timing tuned
+                    // against Punters' own bot-detection and lazy-loading, which stays untouched.
+                    // row.RacesProcessed still advances one at a time as each race actually
+                    // finishes, so the progress bar keeps reading correctly regardless of order.
+                    const int MaxConcurrentRaces = 3;
+                    using var raceThrottle = new SemaphoreSlim(MaxConcurrentRaces);
+
+                    var raceTasks = row.Meeting.Events.Select(async raceEvent =>
                     {
-                        token.ThrowIfCancellationRequested();
+                        await raceThrottle.WaitAsync(token);
                         try
                         {
-                            var detail = await service.ScrapeRaceAsync(discipline, row.Meeting, raceEvent, progress, token);
-                            if (detail.RaceId is not null) _raceDetails[detail.RaceId] = detail;
-                            row.RacesWithDetail++;
-                        }
-                        catch (Exception ex) when (ex is not OperationCanceledException)
-                        {
-                            progress.Report(
-                                $"[P-{discipline.Code()}] Race {raceEvent.EventNumber} ({row.MeetingName}) failed, skipping: {ex.Message}");
-                        }
+                            token.ThrowIfCancellationRequested();
+                            try
+                            {
+                                var detail = await service.ScrapeRaceAsync(discipline, row.Meeting, raceEvent, progress, token);
+                                if (detail.RaceId is not null) _raceDetails[detail.RaceId] = detail;
+                                row.RacesWithDetail++;
+                            }
+                            catch (Exception ex) when (ex is not OperationCanceledException)
+                            {
+                                progress.Report(
+                                    $"[P-{discipline.Code()}] Race {raceEvent.EventNumber} ({row.MeetingName}) failed, skipping: {ex.Message}");
+                            }
 
-                        row.RacesProcessed++;
-                    }
+                            row.RacesProcessed++;
+                        }
+                        finally
+                        {
+                            raceThrottle.Release();
+                        }
+                    });
+
+                    await Task.WhenAll(raceTasks);
 
                     // Export this meeting right away instead of waiting for every other
                     // meeting/discipline in this run to finish scraping too — so a long
