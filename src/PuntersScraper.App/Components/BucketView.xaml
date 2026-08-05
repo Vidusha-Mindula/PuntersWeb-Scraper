@@ -7,6 +7,16 @@
     <!-- Embedded in the "Bucket" tab of MainWindow — browse/delete objects in the configured S3
          bucket. Reads AppSettings fresh on every refresh, so it always reflects whatever bucket
          is currently configured (see BucketViewModel). -->
+    <UserControl.Resources>
+        <!-- Groups the flat Objects list by folder (S3ObjectRow.FolderPath) so the grid reads as
+             one section per folder instead of every object in one long flat list. -->
+        <CollectionViewSource x:Key="GroupedObjects" Source="{Binding Objects}">
+            <CollectionViewSource.GroupDescriptions>
+                <PropertyGroupDescription PropertyName="FolderPath" />
+            </CollectionViewSource.GroupDescriptions>
+        </CollectionViewSource>
+    </UserControl.Resources>
+
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -26,6 +36,10 @@
 
         <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10" VerticalAlignment="Center">
             <Button Content="Refresh" Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding RefreshCommand}" Margin="0,0,10,0" />
+            <Button Content="Upload..." Width="100" Style="{StaticResource SecondaryButton}" Click="Upload_Click" Margin="0,0,16,0"
+                    ToolTip="Upload one or more local files straight to this bucket's root." />
+            <Button Content="Select All" Width="100" Style="{StaticResource SecondaryButton}" Command="{Binding SelectAllCommand}" Margin="0,0,10,0" />
+            <Button Content="Clear Selection" Width="120" Style="{StaticResource SecondaryButton}" Command="{Binding ClearSelectionCommand}" Margin="0,0,10,0" />
             <Button Content="{Binding DeleteSelectedLabel}" Width="150" Click="DeleteSelected_Click"
                     IsEnabled="{Binding CanDeleteSelected}" Margin="0,0,16,0" />
             <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" />
@@ -35,11 +49,27 @@
 
         <Border Grid.Row="2" Background="{StaticResource PanelBrush}" CornerRadius="10"
                 BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1" ClipToBounds="True">
-            <DataGrid ItemsSource="{Binding Objects}" AutoGenerateColumns="False"
+            <DataGrid ItemsSource="{Binding Source={StaticResource GroupedObjects}}" AutoGenerateColumns="False"
                       CanUserAddRows="False" GridLinesVisibility="Horizontal" BorderThickness="0" HeadersVisibility="Column">
+                <DataGrid.GroupStyle>
+                    <GroupStyle>
+                        <GroupStyle.HeaderTemplate>
+                            <DataTemplate>
+                                <Border Background="{StaticResource ControlBrush}" Padding="10,6" Margin="0,4,0,0" CornerRadius="4">
+                                    <TextBlock FontWeight="SemiBold" Foreground="{StaticResource AccentHoverBrush}">
+                                        <Run Text="{Binding Name, Mode=OneWay}" />
+                                        <Run Text=" (" Foreground="{StaticResource SubtleTextBrush}" />
+                                        <Run Text="{Binding ItemCount, Mode=OneWay}" Foreground="{StaticResource SubtleTextBrush}" />
+                                        <Run Text=" file(s))" Foreground="{StaticResource SubtleTextBrush}" />
+                                    </TextBlock>
+                                </Border>
+                            </DataTemplate>
+                        </GroupStyle.HeaderTemplate>
+                    </GroupStyle>
+                </DataGrid.GroupStyle>
                 <DataGrid.Columns>
                     <DataGridCheckBoxColumn Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" Width="32" />
-                    <DataGridTextColumn Header="Key" Binding="{Binding Key}" Width="*" IsReadOnly="True" />
+                    <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="*" IsReadOnly="True" />
                     <DataGridTextColumn Header="Size" Binding="{Binding SizeDisplay}" Width="90" IsReadOnly="True" />
                     <DataGridTextColumn Header="Last modified (UTC)" Binding="{Binding LastModifiedDisplay}" Width="160" IsReadOnly="True" />
                     <DataGridTemplateColumn Header="" Width="80">

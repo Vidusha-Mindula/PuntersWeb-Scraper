@@ -24,6 +24,21 @@ public partial class BucketView : System.Windows.Controls.UserControl
         await _viewModel.RefreshCommand.ExecuteAsync(null);
     }
 
+    private async void Upload_Click(object sender, RoutedEventArgs e)
+    {
+        using var dialog = new System.Windows.Forms.OpenFileDialog
+        {
+            Title = "Choose file(s) to upload to the bucket",
+            Multiselect = true,
+            Filter = "All files (*.*)|*.*"
+        };
+
+        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+        if (dialog.FileNames.Length == 0) return;
+
+        await _viewModel.UploadAsync(dialog.FileNames);
+    }
+
     private async void DeleteOne_Click(object sender, RoutedEventArgs e)
     {
         if (((FrameworkElement)sender).Tag is not S3ObjectRow row) return;

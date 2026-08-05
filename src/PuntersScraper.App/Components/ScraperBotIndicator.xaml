@@ -78,7 +78,7 @@
         </Storyboard>
     </UserControl.Resources>
 
-    <Viewbox Width="40" Height="42" Stretch="Uniform" ToolTip="Scraper status">
+    <Viewbox Width="64" Height="68" Stretch="Uniform" ToolTip="Scraper status">
         <Canvas Width="220" Height="250">
             <Canvas.RenderTransform>
                 <TransformGroup>

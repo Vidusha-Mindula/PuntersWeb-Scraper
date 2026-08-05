@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using PuntersScraper.App.Services;
@@ -35,6 +36,18 @@ public sealed partial class BucketViewModel : ObservableObject
     partial void OnIsBusyChanged(bool value) => OnPropertyChanged(nameof(CanDeleteSelected));
 
     [RelayCommand]
+    private void SelectAll()
+    {
+        foreach (var row in Objects) row.IsSelected = true;
+    }
+
+    [RelayCommand]
+    private void ClearSelection()
+    {
+        foreach (var row in Objects) row.IsSelected = false;
+    }
+
+    [RelayCommand]
     private async Task RefreshAsync()
     {
         IsBusy = true;
@@ -62,6 +75,47 @@ public sealed partial class BucketViewModel : ObservableObject
         {
             IsBusy = false;
             NotifySelectionChanged();
+        }
+    }
+
+    public async Task UploadAsync(IReadOnlyList<string> localFilePaths)
+    {
+        if (localFilePaths.Count == 0) return;
+
+        IsBusy = true;
+        StatusText = $"Uploading {localFilePaths.Count} file(s)...";
+        try
+        {
+            var settings = AppSettings.Load();
+            var uploaded = 0;
+            var errors = new List<string>();
+
+            foreach (var path in localFilePaths)
+            {
+                try
+                {
+                    await S3BucketService.UploadFileAsync(settings, path);
+                    uploaded++;
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"{Path.GetFileName(path)}: {ex.Message}");
+                }
+            }
+
+            StatusText = errors.Count > 0
+                ? $"Uploaded {uploaded} file(s). {errors.Count} failed: {string.Join(" | ", errors)}"
+                : $"Uploaded {uploaded} file(s).";
+
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Upload failed: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
         }
     }
 
