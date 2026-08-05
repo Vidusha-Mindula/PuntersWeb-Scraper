@@ -382,43 +382,30 @@ public sealed partial class MainViewModel : ObservableObject
                 {
                     token.ThrowIfCancellationRequested();
 
-                    // Up to MaxConcurrentRaces races scraped at once instead of strictly one at a
-                    // time - each still opens/closes its own Playwright page (ScrapeRaceAsync),
-                    // so this is safe to run concurrently, and it's the single biggest speed lever
-                    // available without touching the settle-delay/full-form-wait timing tuned
-                    // against Punters' own bot-detection and lazy-loading, which stays untouched.
-                    // row.RacesProcessed still advances one at a time as each race actually
-                    // finishes, so the progress bar keeps reading correctly regardless of order.
-                    const int MaxConcurrentRaces = 3;
-                    using var raceThrottle = new SemaphoreSlim(MaxConcurrentRaces);
-
-                    var raceTasks = row.Meeting.Events.Select(async raceEvent =>
+                    // Scraped one race at a time, deliberately NOT concurrently: each race's full
+                    // past-run history only arrives via a scroll-triggered lazy load
+                    // (ScrapeFullFormsAsync), and Chromium throttles that kind of activity on
+                    // background/inactive tabs - running multiple races' tabs open at once meant
+                    // whichever weren't the foreground tab silently lost their full form history
+                    // and fell back to a single lastRun entry. Sequential keeps every race's tab
+                    // in the foreground for its own scroll-and-wait step.
+                    foreach (var raceEvent in row.Meeting.Events)
                     {
-                        await raceThrottle.WaitAsync(token);
+                        token.ThrowIfCancellationRequested();
                         try
                         {
-                            token.ThrowIfCancellationRequested();
-                            try
-                            {
-                                var detail = await service.ScrapeRaceAsync(discipline, row.Meeting, raceEvent, progress, token);
-                                if (detail.RaceId is not null) _raceDetails[detail.RaceId] = detail;
-                                row.RacesWithDetail++;
-                            }
-                            catch (Exception ex) when (ex is not OperationCanceledException)
-                            {
-                                progress.Report(
-                                    $"[P-{discipline.Code()}] Race {raceEvent.EventNumber} ({row.MeetingName}) failed, skipping: {ex.Message}");
-                            }
-
-                            row.RacesProcessed++;
+                            var detail = await service.ScrapeRaceAsync(discipline, row.Meeting, raceEvent, progress, token);
+                            if (detail.RaceId is not null) _raceDetails[detail.RaceId] = detail;
+                            row.RacesWithDetail++;
                         }
-                        finally
+                        catch (Exception ex) when (ex is not OperationCanceledException)
                         {
-                            raceThrottle.Release();
+                            progress.Report(
+                                $"[P-{discipline.Code()}] Race {raceEvent.EventNumber} ({row.MeetingName}) failed, skipping: {ex.Message}");
                         }
-                    });
 
-                    await Task.WhenAll(raceTasks);
+                        row.RacesProcessed++;
+                    }
 
                     // Export this meeting right away instead of waiting for every other
                     // meeting/discipline in this run to finish scraping too — so a long

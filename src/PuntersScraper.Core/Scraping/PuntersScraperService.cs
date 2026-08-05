@@ -61,6 +61,18 @@ public sealed class PuntersScraperService : IPuntersScraperService
         if (!options.Headless && options.HideWindow)
         {
             args.Add("--window-position=-32000,-32000");
+
+            // Chromium treats a window positioned off-screen as occluded/not-visible and applies
+            // the same throttling it uses for background tabs (reduced timers, skipped
+            // rendering) - confirmed by testing: the full-form scroll-triggered lazy load
+            // (ScrapeFullFormsAsync's getFullFormsBySelectionIds request) never fired at all with
+            // the window off-screen, but worked immediately in a normal visible window. These
+            // flags disable that throttling specifically for occluded/backgrounded windows/timers
+            // without changing anything JS-visible on the page, so they shouldn't affect
+            // bot-detection.
+            args.Add("--disable-backgrounding-occluded-windows");
+            args.Add("--disable-renderer-backgrounding");
+            args.Add("--disable-background-timer-throttling");
         }
 
         _playwright = await Playwright.CreateAsync();
@@ -372,13 +384,24 @@ public sealed class PuntersScraperService : IPuntersScraperService
     /// has) come from a getFullFormsBySelectionIds query, fired one-per-runner by Punters' own
     /// page code — but only once that runner's row scrolls into view (confirmed empirically: with
     /// no scrolling at all, none of these requests fire, no matter how long you wait). This clicks
-    /// the page's own "Show All Form" button, then sweeps down the page in small wheel steps with
-    /// a real pause between each — confirmed empirically to be what actually triggers every row's
-    /// lazy fetch reliably; scrollIntoViewIfNeeded() (which jumps straight there) and large wheel
-    /// steps (which can hop clean over a row between polls) both missed rows in testing. Reads
-    /// back the real responses Playwright observes rather than replaying the request ourselves
-    /// (api.punters.com.au rejects requests it doesn't recognize as coming from the real page —
-    /// see the class doc comment; confirmed by testing an equivalent in-page fetch() call
+    /// the page's own "Show All Form" button, then sweeps down the page via window.scrollBy with a
+    /// real pause between each step, polling window.scrollY/scrollHeight for progress.
+    ///
+    /// This used to scroll via Playwright's Mouse.WheelAsync, but that stopped moving the page at
+    /// all in this off-screen/automated window (window.scrollY stayed at exactly 0 for the entire
+    /// 60s deadline regardless of cursor position — confirmed by direct testing) — window.scrollBy
+    /// is what actually works now. scrollIntoViewIfNeeded() (which jumps straight there) and large
+    /// scroll steps (which can hop clean over a row between polls) both missed rows in earlier
+    /// testing, hence the small-step-with-pause approach rather than one big jump.
+    ///
+    /// Also worth noting: Punters now serves every GraphQL operation from one shared endpoint
+    /// (api.punters.com.au/racing, operation name as a URL query parameter) rather than a
+    /// distinct path per query, so this matches loosely on host and validates the actual operation
+    /// by response shape (a "competitorForms" array) rather than an exact URL substring.
+    ///
+    /// Reads back the real responses Playwright observes rather than replaying the request
+    /// ourselves (api.punters.com.au rejects requests it doesn't recognize as coming from the real
+    /// page — see the class doc comment; confirmed by testing an equivalent in-page fetch() call
     /// directly, which was rejected outright).
     ///
     /// Best-effort like <see cref="SilkSvgDescriber"/>: if the button isn't there, or some
@@ -393,7 +416,7 @@ public sealed class PuntersScraperService : IPuntersScraperService
 
         async void OnResponse(object? _, IResponse response)
         {
-            if (!response.Url.Contains("getFullFormsBySelectionIds")) return;
+            if (!response.Url.Contains("api.punters.com.au")) return;
             try
             {
                 var body = await response.TextAsync();
@@ -429,12 +452,6 @@ public sealed class PuntersScraperService : IPuntersScraperService
             await showAllButton.First.ClickAsync(new LocatorClickOptions { Timeout = 10_000 });
             await page.WaitForTimeoutAsync(500);
 
-            // Small wheel steps with a real pause between each reliably trigger every runner
-            // row's lazy fetch as it passes through the viewport; scrollIntoViewIfNeeded() (which
-            // jumps straight there) and large wheel steps (which can hop clean over a row between
-            // polls) both missed rows in testing — this needs an actual gradual scroll, not a
-            // teleport. Sweeps top-to-bottom repeatedly (bounded by the overall deadline below)
-            // in case a row's request didn't fire on the first pass.
             var overallDeadline = DateTime.UtcNow.AddSeconds(60);
             while (formsBySelectionId.Count < expectedRunnerCount && DateTime.UtcNow < overallDeadline)
             {
@@ -444,7 +461,7 @@ public sealed class PuntersScraperService : IPuntersScraperService
                 var atBottom = false;
                 while (!atBottom && formsBySelectionId.Count < expectedRunnerCount && DateTime.UtcNow < overallDeadline)
                 {
-                    await page.Mouse.WheelAsync(0, 600);
+                    await page.EvaluateAsync("() => window.scrollBy(0, 600)");
                     await page.WaitForTimeoutAsync(350);
                     atBottom = await page.EvaluateAsync<bool>(
                         "() => (window.innerHeight + window.scrollY) >= document.body.scrollHeight - 10");
