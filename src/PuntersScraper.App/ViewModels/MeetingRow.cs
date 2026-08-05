@@ -35,6 +35,18 @@ public sealed partial class MeetingRow : ObservableObject
     [ObservableProperty]
     private int racesWithDetail;
 
+    /// <summary>Races attempted so far (success or failure) — drives <see cref="ProgressPercent"/>
+    /// so the bar reaches 100% once the meeting's race loop finishes, rather than stalling short
+    /// of full whenever a race fails and is skipped.</summary>
+    [ObservableProperty]
+    private int racesProcessed;
+
+    /// <summary>0-100. RacesProcessed/RaceCount — a meeting with no races reads as fully done
+    /// rather than 0%.</summary>
+    public int ProgressPercent => RaceCount == 0 ? 100 : (int)Math.Round(100.0 * RacesProcessed / RaceCount);
+
+    partial void OnRacesProcessedChanged(int value) => OnPropertyChanged(nameof(ProgressPercent));
+
     public static MeetingRow From(Discipline discipline, string group, Meeting meeting) => new()
     {
         DisciplineEnum = discipline,

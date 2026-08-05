@@ -2,17 +2,26 @@ using System.Windows;
 using PuntersScraper.App.ViewModels;
 using MessageBox = System.Windows.MessageBox;
 
-namespace PuntersScraper.App;
+namespace PuntersScraper.App.Components;
 
-public partial class BucketWindow : Window
+public partial class BucketView : System.Windows.Controls.UserControl
 {
     private readonly BucketViewModel _viewModel = new();
+    private bool _loaded;
 
-    public BucketWindow()
+    public BucketView()
     {
         InitializeComponent();
         DataContext = _viewModel;
-        Loaded += async (_, _) => await _viewModel.RefreshCommand.ExecuteAsync(null);
+    }
+
+    private async void UserControl_Loaded(object sender, RoutedEventArgs e)
+    {
+        // TabItem content stays alive after the tab is switched away from, so Loaded can fire
+        // more than once (e.g. re-docking) — only auto-refresh the first time.
+        if (_loaded) return;
+        _loaded = true;
+        await _viewModel.RefreshCommand.ExecuteAsync(null);
     }
 
     private async void DeleteOne_Click(object sender, RoutedEventArgs e)

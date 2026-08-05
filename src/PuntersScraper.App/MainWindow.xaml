@@ -14,16 +14,14 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- Header -->
         <Grid Grid.Row="0" Margin="0,0,0,16">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
             <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
@@ -35,8 +33,14 @@
                 </StackPanel>
             </StackPanel>
 
-            <!-- Scraper mascot: stands still while idle, animates whenever a scrape is running -->
-            <components:ScraperBotIndicator Grid.Column="1" VerticalAlignment="Center" IsActive="{Binding IsBusy}" />
+            <!-- Mascot's running track: the empty header space to the right of the title. It
+                 walks back and forth across this whole area continuously, and additionally comes
+                 alive (blinking/glowing/talking) whenever a scrape is running. -->
+            <Grid x:Name="MascotTrack" Grid.Column="1" Margin="24,0,0,0">
+                <components:ScraperBotIndicator HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                 IsActive="{Binding IsBusy}"
+                                                 TrackWidth="{Binding ActualWidth, ElementName=MascotTrack}" />
+            </Grid>
         </Grid>
 
         <!-- Update banner: hidden unless MainViewModel finds a newer GitHub release on startup -->
@@ -44,113 +48,143 @@
                 BorderBrush="{StaticResource AccentBrush}" BorderThickness="1" Padding="14,10" Margin="0,0,0,14"
                 Visibility="{Binding UpdateAvailable, Converter={StaticResource BoolToVisibility}}">
             <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="{Binding UpdateStatusText}" VerticalAlignment="Center"
+
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding UpdateStatusText}" VerticalAlignment="Center"
                            Foreground="{StaticResource AccentHoverBrush}" FontWeight="SemiBold" />
-                <Button Grid.Column="1" Content="{Binding UpdateButtonText}" Width="150" Style="{StaticResource PrimaryButton}"
+                <Button Grid.Row="0" Grid.Column="1" Content="{Binding UpdateButtonText}" Width="150" Style="{StaticResource PrimaryButton}"
                         Command="{Binding UpdateNowCommand}"
                         ToolTip="Downloads the new installer and runs it — this app closes automatically so the installer can update its files." />
+
+                <!-- Only shown while the installer is actually downloading — a real percentage
+                     (or, if the server sent no Content-Length, a moving indeterminate sweep) so
+                     it's never ambiguous whether this is progressing or stuck. -->
+                <ProgressBar Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,10,0,0"
+                             Minimum="0" Maximum="100" Value="{Binding UpdateDownloadPercent, Mode=OneWay}"
+                             IsIndeterminate="{Binding IsUpdateDownloadIndeterminate}"
+                             Visibility="{Binding IsUpdating, Converter={StaticResource BoolToVisibility}}" />
             </Grid>
         </Border>
 
-        <!-- Controls card -->
-        <Border Grid.Row="2" Background="{StaticResource PanelBrush}" CornerRadius="10"
-                BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1" Padding="16,14" Margin="0,0,0,14">
-            <StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,12" VerticalAlignment="Center">
-                    <TextBlock Text="Date" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
-                    <DatePicker SelectedDate="{Binding SelectedDate}" Width="130" Margin="0,0,24,0"
-                                CalendarStyle="{StaticResource DarkCalendarStyle}" />
+        <TabControl Grid.Row="2">
+            <TabItem Header="Scraper">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
 
-                    <CheckBox Content="Horses (T)" IsChecked="{Binding ScrapeHorses}" Margin="0,0,18,0" VerticalAlignment="Center" />
-                    <CheckBox Content="Greyhounds (G)" IsChecked="{Binding ScrapeGreyhounds}" Margin="0,0,18,0" VerticalAlignment="Center" />
-                    <CheckBox Content="Harness (H)" IsChecked="{Binding ScrapeHarness}" Margin="0,0,24,0" VerticalAlignment="Center" />
+                    <!-- Controls card -->
+                    <Border Grid.Row="0" Background="{StaticResource PanelBrush}" CornerRadius="10"
+                            BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1" Padding="16,14" Margin="0,0,0,14">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12" VerticalAlignment="Center">
+                                <TextBlock Text="Date" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
+                                <DatePicker SelectedDate="{Binding SelectedDate}" Width="130" Margin="0,0,24,0"
+                                            CalendarStyle="{StaticResource DarkCalendarStyle}" />
 
-                    <CheckBox Content="Headless" IsChecked="{Binding Headless}" VerticalAlignment="Center"
-                              ToolTip="Unchecked (default) runs a real browser positioned off-screen, so it never appears yet still passes Punters' bot-detection reliably. Checking this uses true headless mode instead, which is faster but may get blocked." />
-                </StackPanel>
+                                <CheckBox Content="Horses (T)" IsChecked="{Binding ScrapeHorses}" Margin="0,0,18,0" VerticalAlignment="Center" />
+                                <CheckBox Content="Greyhounds (G)" IsChecked="{Binding ScrapeGreyhounds}" Margin="0,0,18,0" VerticalAlignment="Center" />
+                                <CheckBox Content="Harness (H)" IsChecked="{Binding ScrapeHarness}" Margin="0,0,24,0" VerticalAlignment="Center" />
 
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,12" VerticalAlignment="Center">
-                    <TextBlock Text="Country (ISO2)" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
-                    <TextBox Text="{Binding CountryCodeFilter, UpdateSourceTrigger=PropertyChanged}" Width="64" Margin="0,0,24,0"
-                             ToolTip="Optional. Only scrape meetings in this country, e.g. AU, NZ, US, GB. Leave blank for all countries." />
+                                <CheckBox Content="Headless" IsChecked="{Binding Headless}" VerticalAlignment="Center"
+                                          ToolTip="Unchecked (default) runs a real browser positioned off-screen, so it never appears yet still passes Punters' bot-detection reliably. Checking this uses true headless mode instead, which is faster but may get blocked." />
+                            </StackPanel>
 
-                    <TextBlock Text="Course name" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
-                    <TextBox Text="{Binding CourseNameFilter, UpdateSourceTrigger=PropertyChanged}" Width="170" Margin="0,0,24,0"
-                             ToolTip="Optional. Only scrape meetings whose course/meeting name contains this text, e.g. Belmont. Leave blank for all courses." />
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12" VerticalAlignment="Center">
+                                <TextBlock Text="Country (ISO2)" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
+                                <TextBox Text="{Binding CountryCodeFilter, UpdateSourceTrigger=PropertyChanged}" Width="64" Margin="0,0,24,0"
+                                         ToolTip="Optional. Only scrape meetings in this country, e.g. AU, NZ, US, GB. Leave blank for all countries." />
 
-                    <Button Content="Scrape" Width="110" Style="{StaticResource PrimaryButton}" Command="{Binding ScrapeCommand}" Margin="0,0,10,0"
-                            ToolTip="Scrapes meetings AND every race's full runner/jockey/form detail for the selected discipline(s), date, and filters — one click, everything." />
-                    <Button Content="Stop" Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding StopCommand}" Margin="0,0,10,0"
-                            ToolTip="Cancels the running scrape as soon as the current in-flight request finishes." />
-                    <Button Content="Export JSON..." Width="140" Style="{StaticResource SecondaryButton}" Command="{Binding ExportJsonCommand}"
-                            ToolTip="Saves one folder per meeting, each containing that meeting's file plus a DataDump file for every scraped race." />
-                </StackPanel>
+                                <TextBlock Text="Course name" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
+                                <TextBox Text="{Binding CourseNameFilter, UpdateSourceTrigger=PropertyChanged}" Width="170" Margin="0,0,24,0"
+                                         ToolTip="Optional. Only scrape meetings whose course/meeting name contains this text, e.g. Belmont. Leave blank for all courses." />
 
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="Download folder" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
-                    <TextBox Text="{Binding DownloadFolder}" Width="340" IsReadOnly="True" Margin="0,0,8,0"
-                             ToolTip="Default folder Export JSON opens to, and that auto-export (if enabled) writes to directly." />
-                    <Button Content="Browse..." Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding BrowseDownloadFolderCommand}" Margin="0,0,24,0" />
+                                <Button Content="Scrape" Width="110" Style="{StaticResource PrimaryButton}" Command="{Binding ScrapeCommand}" Margin="0,0,10,0"
+                                        ToolTip="Scrapes meetings AND every race's full runner/jockey/form detail for the selected discipline(s), date, and filters — one click, everything." />
+                                <Button Content="Stop" Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding StopCommand}" Margin="0,0,10,0"
+                                        ToolTip="Cancels the running scrape as soon as the current in-flight request finishes." />
+                                <Button Content="Export JSON..." Width="140" Style="{StaticResource SecondaryButton}" Command="{Binding ExportJsonCommand}"
+                                        ToolTip="Saves one folder per meeting, each containing that meeting's file plus a DataDump file for every scraped race." />
+                            </StackPanel>
 
-                    <CheckBox Content="Auto-export JSON after scrape" IsChecked="{Binding AutoExportAfterScrape}" VerticalAlignment="Center" Margin="0,0,24,0"
-                              ToolTip="When checked, a successful scrape immediately saves JSON to the download folder above — no prompt. Requires a download folder to be set." />
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="Download folder" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
+                                <TextBox Text="{Binding DownloadFolder}" Width="340" IsReadOnly="True" Margin="0,0,8,0"
+                                         ToolTip="Default folder Export JSON opens to, and that auto-export (if enabled) writes to directly." />
+                                <Button Content="Browse..." Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding BrowseDownloadFolderCommand}" Margin="0,0,24,0" />
 
-                    <CheckBox Content="Also upload to S3 (pending)" IsChecked="{Binding UploadToS3}" VerticalAlignment="Center" Margin="0,0,10,0"
-                              ToolTip="When checked, every exported file is also uploaded directly into the configured bucket's pending folder — flat, no per-meeting nesting there (local files keep their per-meeting folders as usual)." />
+                                <CheckBox Content="Auto-export JSON after scrape" IsChecked="{Binding AutoExportAfterScrape}" VerticalAlignment="Center" Margin="0,0,24,0"
+                                          ToolTip="When checked, a successful scrape immediately saves JSON to the download folder above — no prompt. Requires a download folder to be set." />
 
-                    <TextBlock Text="Bucket" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
-                    <TextBox Text="{Binding S3BucketName, UpdateSourceTrigger=PropertyChanged}" Width="180" Margin="0,0,24,0"
-                             ToolTip="S3 bucket name to upload to. Remembered across app restarts." />
+                                <CheckBox Content="Also upload to S3 (pending)" IsChecked="{Binding UploadToS3}" VerticalAlignment="Center" Margin="0,0,10,0"
+                                          ToolTip="When checked, every exported file is also uploaded directly into the configured bucket's pending folder — flat, no per-meeting nesting there (local files keep their per-meeting folders as usual)." />
 
-                    <TextBlock Text="Access Key" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
-                    <TextBox Text="{Binding S3AccessKey, UpdateSourceTrigger=PropertyChanged}" Width="140" Margin="0,0,24,0"
-                             ToolTip="S3 access key. Remembered across app restarts (stored locally, never in source control)." />
+                                <TextBlock Text="Bucket" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
+                                <TextBox Text="{Binding S3BucketName, UpdateSourceTrigger=PropertyChanged}" Width="180"
+                                         ToolTip="S3 bucket name to upload to. Remembered across app restarts. Access/secret keys are configured once at install time — see the Bucket tab to browse what's already up there." />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
 
-                    <TextBlock Text="Secret Key" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
-                    <TextBox Text="{Binding S3SecretKey, UpdateSourceTrigger=PropertyChanged}" Width="140" Margin="0,0,24,0"
-                             ToolTip="S3 secret key. Remembered across app restarts (stored locally, never in source control)." />
+                    <!-- Results -->
+                    <Border Grid.Row="1" Background="{StaticResource PanelBrush}" CornerRadius="10"
+                            BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1" Margin="0,0,0,14" ClipToBounds="True">
+                        <DataGrid ItemsSource="{Binding Meetings}" AutoGenerateColumns="False"
+                                  IsReadOnly="True" CanUserAddRows="False" GridLinesVisibility="Horizontal"
+                                  BorderThickness="0" HeadersVisibility="Column">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Discipline" Binding="{Binding Discipline}" Width="80" />
+                                <DataGridTextColumn Header="Group" Binding="{Binding Group}" Width="110" />
+                                <DataGridTextColumn Header="Meeting" Binding="{Binding MeetingName}" Width="*" />
+                                <DataGridTextColumn Header="State" Binding="{Binding State}" Width="60" />
+                                <DataGridTextColumn Header="Country" Binding="{Binding Country}" Width="70" />
+                                <DataGridTextColumn Header="Races" Binding="{Binding RaceCount}" Width="55" />
+                                <DataGridTextColumn Header="Detail" Binding="{Binding RacesWithDetail}" Width="55" />
+                                <DataGridTextColumn Header="First Race" Binding="{Binding FirstRaceLocalTime}" Width="90" />
+                                <DataGridTextColumn Header="Track" Binding="{Binding TrackCondition}" Width="80" />
+                                <DataGridTextColumn Header="Stage" Binding="{Binding MeetingStage}" Width="100" />
+                                <DataGridTemplateColumn Header="Progress" Width="130">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                <ProgressBar Width="80" Height="8" Minimum="0" Maximum="100"
+                                                             Value="{Binding ProgressPercent, Mode=OneWay}" />
+                                                <TextBlock Text="{Binding ProgressPercent, StringFormat={}{0}%}" Margin="8,0,0,0"
+                                                           VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource SubtleTextBrush}" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Border>
 
-                    <Button Content="Manage Bucket..." Width="130" Style="{StaticResource SecondaryButton}" Click="ManageBucket_Click"
-                            ToolTip="Browse and delete files already uploaded to the configured S3 bucket." />
-                </StackPanel>
-            </StackPanel>
-        </Border>
+                    <!-- Status bar -->
+                    <Grid Grid.Row="2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="180" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding StatusText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                   Foreground="{StaticResource SubtleTextBrush}" />
+                        <ProgressBar Grid.Column="1" Width="180" IsIndeterminate="{Binding IsBusy}"
+                                     Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
+                    </Grid>
+                </Grid>
+            </TabItem>
 
-        <!-- Results -->
-        <Border Grid.Row="3" Background="{StaticResource PanelBrush}" CornerRadius="10"
-                BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1" Margin="0,0,0,14" ClipToBounds="True">
-            <DataGrid ItemsSource="{Binding Meetings}" AutoGenerateColumns="False"
-                      IsReadOnly="True" CanUserAddRows="False" GridLinesVisibility="Horizontal"
-                      BorderThickness="0" HeadersVisibility="Column">
-                <DataGrid.Columns>
-                    <DataGridTextColumn Header="Discipline" Binding="{Binding Discipline}" Width="80" />
-                    <DataGridTextColumn Header="Group" Binding="{Binding Group}" Width="110" />
-                    <DataGridTextColumn Header="Meeting" Binding="{Binding MeetingName}" Width="*" />
-                    <DataGridTextColumn Header="State" Binding="{Binding State}" Width="60" />
-                    <DataGridTextColumn Header="Country" Binding="{Binding Country}" Width="70" />
-                    <DataGridTextColumn Header="Races" Binding="{Binding RaceCount}" Width="55" />
-                    <DataGridTextColumn Header="Detail" Binding="{Binding RacesWithDetail}" Width="55" />
-                    <DataGridTextColumn Header="First Race" Binding="{Binding FirstRaceLocalTime}" Width="90" />
-                    <DataGridTextColumn Header="Track" Binding="{Binding TrackCondition}" Width="80" />
-                    <DataGridTextColumn Header="Stage" Binding="{Binding MeetingStage}" Width="100" />
-                </DataGrid.Columns>
-            </DataGrid>
-        </Border>
-
-        <!-- Status bar -->
-        <Grid Grid.Row="4">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="180" />
-            </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="0" Text="{Binding StatusText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
-                       Foreground="{StaticResource SubtleTextBrush}" />
-            <ProgressBar Grid.Column="1" Width="180" IsIndeterminate="{Binding IsBusy}"
-                         Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
-        </Grid>
+            <TabItem Header="Bucket">
+                <components:BucketView />
+            </TabItem>
+        </TabControl>
     </Grid>
 </Window>

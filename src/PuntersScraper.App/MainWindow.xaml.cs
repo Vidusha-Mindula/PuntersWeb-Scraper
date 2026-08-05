@@ -42,9 +42,4 @@ public partial class MainWindow : Window
 
     [DllImport("dwmapi.dll", PreserveSig = true)]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int pvAttribute, int cbAttribute);
-
-    private void ManageBucket_Click(object sender, RoutedEventArgs e)
-    {
-        new BucketWindow { Owner = this }.Show();
-    }
 }

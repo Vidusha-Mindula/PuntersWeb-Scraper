@@ -88,10 +88,18 @@ public static class UpdateChecker
         }
     }
 
-    /// <summary>Downloads the installer .exe to a temp file. Caller is expected to launch it
-    /// (<see cref="LaunchInstaller"/>) and then shut the running app down so the installer can
-    /// overwrite its files.</summary>
-    public static async Task<string> DownloadInstallerAsync(string downloadUrl, CancellationToken cancellationToken = default)
+    /// <summary>Downloads the installer .exe to a temp file, reporting progress as it goes so the
+    /// caller can show a real percentage rather than an indefinite spinner. Caller is expected to
+    /// launch it (<see cref="LaunchInstaller"/>) and then shut the running app down so the
+    /// installer can overwrite its files.</summary>
+    /// <param name="progress">
+    /// Reports 0-100 as bytes arrive. If the server doesn't send a Content-Length (rare for a
+    /// GitHub release asset, but not guaranteed), this reports -1 once and never again — the
+    /// caller should treat that as "show an indeterminate bar instead", since there's no total to
+    /// compute a percentage against.
+    /// </param>
+    public static async Task<string> DownloadInstallerAsync(
+        string downloadUrl, IProgress<double>? progress = null, CancellationToken cancellationToken = default)
     {
         using var http = new HttpClient();
         http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("PuntersScraper.App", "1.0"));
@@ -102,9 +110,27 @@ public static class UpdateChecker
         using var response = await http.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
 
-        await using (var fs = File.Create(path))
+        var totalBytes = response.Content.Headers.ContentLength;
+        if (totalBytes is null or <= 0)
         {
-            await response.Content.CopyToAsync(fs, cancellationToken);
+            progress?.Report(-1);
+        }
+
+        await using var httpStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var fileStream = File.Create(path);
+
+        var buffer = new byte[81920];
+        long totalRead = 0;
+        int bytesRead;
+        while ((bytesRead = await httpStream.ReadAsync(buffer, cancellationToken)) > 0)
+        {
+            await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+            totalRead += bytesRead;
+
+            if (totalBytes is > 0)
+            {
+                progress?.Report(Math.Min(100.0, totalRead * 100.0 / totalBytes.Value));
+            }
         }
 
         return path;

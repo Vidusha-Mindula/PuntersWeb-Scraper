@@ -32,8 +32,6 @@ public sealed partial class MainViewModel : ObservableObject
         AutoExportAfterScrape = _settings.AutoExportAfterScrape;
         UploadToS3 = _settings.UploadToS3;
         S3BucketName = _settings.S3BucketName;
-        S3AccessKey = _settings.S3AccessKey;
-        S3SecretKey = _settings.S3SecretKey;
         _loadingSettings = false;
 
         _ = CheckForUpdatesAsync();
@@ -94,14 +92,6 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string s3BucketName = "";
 
-    /// <summary>S3 access/secret key, editable here since AppSettings ships with no default of
-    /// its own (source is public) — set once per install, remembered across restarts.</summary>
-    [ObservableProperty]
-    private string s3AccessKey = "";
-
-    [ObservableProperty]
-    private string s3SecretKey = "";
-
     /// <summary>True once a newer release than the one currently running has been found on
     /// GitHub — drives the update banner's visibility in MainWindow.</summary>
     [ObservableProperty]
@@ -115,6 +105,17 @@ public sealed partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private bool isUpdating;
+
+    /// <summary>0-100 while the installer downloads. Only meaningful when
+    /// <see cref="IsUpdateDownloadIndeterminate"/> is false — see UpdateChecker.DownloadInstallerAsync.</summary>
+    [ObservableProperty]
+    private double updateDownloadPercent;
+
+    /// <summary>True if the download has no known total size to compute a percentage against
+    /// (GitHub didn't send a Content-Length) — shows a spinning bar instead of a stalled 0%, so
+    /// it's still clear the download is progressing rather than stuck.</summary>
+    [ObservableProperty]
+    private bool isUpdateDownloadIndeterminate;
 
     public ObservableCollection<MeetingRow> Meetings { get; } = new();
 
@@ -170,20 +171,6 @@ public sealed partial class MainViewModel : ObservableObject
         _settings.Save();
     }
 
-    partial void OnS3AccessKeyChanged(string value)
-    {
-        if (_loadingSettings) return;
-        _settings.S3AccessKey = value;
-        _settings.Save();
-    }
-
-    partial void OnS3SecretKeyChanged(string value)
-    {
-        if (_loadingSettings) return;
-        _settings.S3SecretKey = value;
-        _settings.Save();
-    }
-
     private async Task CheckForUpdatesAsync()
     {
         var update = await UpdateChecker.CheckAsync();
@@ -202,8 +189,24 @@ public sealed partial class MainViewModel : ObservableObject
         try
         {
             IsUpdating = true;
-            UpdateButtonText = "Downloading...";
-            var installerPath = await UpdateChecker.DownloadInstallerAsync(_pendingUpdate.DownloadUrl);
+            UpdateDownloadPercent = 0;
+            IsUpdateDownloadIndeterminate = false;
+            UpdateButtonText = "Downloading... 0%";
+
+            IProgress<double> downloadProgress = new Progress<double>(pct =>
+            {
+                if (pct < 0)
+                {
+                    IsUpdateDownloadIndeterminate = true;
+                    UpdateButtonText = "Downloading...";
+                    return;
+                }
+
+                UpdateDownloadPercent = pct;
+                UpdateButtonText = $"Downloading... {pct:0}%";
+            });
+
+            var installerPath = await UpdateChecker.DownloadInstallerAsync(_pendingUpdate.DownloadUrl, downloadProgress);
 
             UpdateButtonText = "Launching installer...";
             UpdateChecker.LaunchInstaller(installerPath);
@@ -217,6 +220,8 @@ public sealed partial class MainViewModel : ObservableObject
         {
             StatusText = $"Update failed: {ex.Message}";
             IsUpdating = false;
+            IsUpdateDownloadIndeterminate = false;
+            UpdateDownloadPercent = 0;
             UpdateButtonText = "Update Now";
         }
     }
@@ -339,14 +344,28 @@ public sealed partial class MainViewModel : ObservableObject
                 foreach (var row in rows)
                 {
                     token.ThrowIfCancellationRequested();
-                    var details = await service.ScrapeRacesForMeetingAsync(discipline, row.Meeting, progress, token);
-                    foreach (var detail in details)
-                    {
-                        if (detail.RaceId is null) continue;
-                        _raceDetails[detail.RaceId] = detail;
-                    }
 
-                    row.RacesWithDetail = details.Count;
+                    // Scraped one race at a time (rather than via ScrapeRacesForMeetingAsync,
+                    // which only returns once the whole meeting is done) so row.RacesProcessed —
+                    // and so the row's progress bar — advances live as each race finishes, instead
+                    // of jumping straight from 0% to 100%.
+                    foreach (var raceEvent in row.Meeting.Events)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        try
+                        {
+                            var detail = await service.ScrapeRaceAsync(discipline, row.Meeting, raceEvent, progress, token);
+                            if (detail.RaceId is not null) _raceDetails[detail.RaceId] = detail;
+                            row.RacesWithDetail++;
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            progress.Report(
+                                $"[P-{discipline.Code()}] Race {raceEvent.EventNumber} ({row.MeetingName}) failed, skipping: {ex.Message}");
+                        }
+
+                        row.RacesProcessed++;
+                    }
 
                     // Export this meeting right away instead of waiting for every other
                     // meeting/discipline in this run to finish scraping too — so a long
