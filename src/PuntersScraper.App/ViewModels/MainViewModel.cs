@@ -24,6 +24,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private UpdateInfo? _pendingUpdate;
     private CancellationTokenSource? _cts;
+    private string? _pendingNoticeId;
 
     public MainViewModel()
     {
@@ -35,6 +36,7 @@ public sealed partial class MainViewModel : ObservableObject
         _loadingSettings = false;
 
         _ = CheckForUpdatesAsync();
+        _ = CheckForDeveloperNoticeAsync();
     }
 
     [ObservableProperty]
@@ -117,6 +119,17 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool isUpdateDownloadIndeterminate;
 
+    /// <summary>True once a developer notice (see DeveloperNoticeChecker) the user hasn't already
+    /// dismissed has been found — drives the "Developer Note" banner's visibility.</summary>
+    [ObservableProperty]
+    private bool developerNoticeVisible;
+
+    [ObservableProperty]
+    private string developerNoticeTitle = "";
+
+    [ObservableProperty]
+    private string developerNoticeMessage = "";
+
     public ObservableCollection<MeetingRow> Meetings { get; } = new();
 
     partial void OnIsBusyChanged(bool value)
@@ -179,6 +192,30 @@ public sealed partial class MainViewModel : ObservableObject
         _pendingUpdate = update;
         UpdateStatusText = $"Update available: v{update.Version}";
         UpdateAvailable = true;
+    }
+
+    private async Task CheckForDeveloperNoticeAsync()
+    {
+        var notice = await DeveloperNoticeChecker.CheckAsync();
+        if (notice is null) return;
+        if (notice.Id == _settings.LastSeenNoticeId) return;
+
+        _pendingNoticeId = notice.Id;
+        DeveloperNoticeTitle = notice.Title;
+        DeveloperNoticeMessage = notice.Message;
+        DeveloperNoticeVisible = true;
+    }
+
+    /// <summary>The only way this banner closes — a deliberate "I've read this" action rather
+    /// than an easy-to-misclick X, so dismissing it actually means the user saw the message.</summary>
+    [RelayCommand]
+    private void DismissDeveloperNotice()
+    {
+        if (_pendingNoticeId is null) return;
+
+        _settings.LastSeenNoticeId = _pendingNoticeId;
+        _settings.Save();
+        DeveloperNoticeVisible = false;
     }
 
     [RelayCommand(CanExecute = nameof(CanUpdateNow))]

@@ -14,6 +14,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -73,7 +74,26 @@
             </Grid>
         </Border>
 
-        <TabControl Grid.Row="2">
+        <!-- Developer Note banner: hidden unless a notice.json Id hasn't already been dismissed
+             (see AppSettings.LastSeenNoticeId). The only way to close it is the button below —
+             no X — so dismissing it means it was actually read, not misclicked away. -->
+        <Border Grid.Row="2" Background="{StaticResource PanelBrush}" CornerRadius="10"
+                BorderBrush="#4FA8D8" BorderThickness="1" Padding="14,10" Margin="0,0,0,14"
+                Visibility="{Binding DeveloperNoticeVisible, Converter={StaticResource BoolToVisibility}}">
+            <StackPanel>
+                <TextBlock FontWeight="Bold" Foreground="#6CC2EE" Margin="0,0,0,6">
+                    <Run Text="📣 Developer Note" />
+                    <Run Text=" — " Foreground="{StaticResource SubtleTextBrush}" />
+                    <Run Text="{Binding DeveloperNoticeTitle, Mode=OneWay}" Foreground="{StaticResource TextBrush}" />
+                </TextBlock>
+                <TextBlock Text="{Binding DeveloperNoticeMessage, Mode=OneWay}" TextWrapping="Wrap"
+                           Foreground="{StaticResource TextBrush}" Margin="0,0,0,10" />
+                <Button Content="I've read this — Dismiss" Width="200" HorizontalAlignment="Left"
+                        Style="{StaticResource PrimaryButton}" Command="{Binding DismissDeveloperNoticeCommand}" />
+            </StackPanel>
+        </Border>
+
+        <TabControl Grid.Row="3">
             <TabItem Header="Scraper">
                 <Grid>
                     <Grid.RowDefinitions>

@@ -21,6 +21,11 @@ public sealed class AppSettings
     public string S3BucketName { get; set; } = "punter-web-scraper";
     public string S3Folder { get; set; } = "pending";
 
+    /// <summary>Id of the last developer notice (see DeveloperNoticeChecker) the user explicitly
+    /// dismissed. A notice with a different Id is treated as new and shown again, even if an
+    /// earlier one was already read.</summary>
+    public string LastSeenNoticeId { get; set; } = "";
+
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "PuntersScraper", "settings.json");
