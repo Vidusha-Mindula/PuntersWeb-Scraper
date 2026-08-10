@@ -1,5 +1,5 @@
 ﻿{
-    "id":  "20260806015709",
-    "title":  "Hi Users, I am VM",
-    "message":  "Happy to Scraping with you, provide your honest feedbacks"
+    "id": "20260810120641",
+    "title": "S3 Bucket Fix (v3.9.0)",
+    "message": "Fixed an issue where some computers couldn't access the S3 bucket. Update to v3.9.0 and your settings will reset to the correct bucket automatically - no action needed."
 }
