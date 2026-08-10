@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using Amazon.S3;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using PuntersScraper.App.Services;
@@ -35,6 +36,15 @@ public sealed partial class BucketViewModel : ObservableObject
 
     partial void OnIsBusyChanged(bool value) => OnPropertyChanged(nameof(CanDeleteSelected));
 
+    /// <summary>Amazon's SDK exception carries the actual S3 error code and request id, which
+    /// tell apart otherwise-identical-looking failures (e.g. a true bucket-policy AccessDenied vs.
+    /// RequestTimeTooSkewed from a wrong system clock vs. SignatureDoesNotMatch) - plain
+    /// ex.Message alone often doesn't distinguish these, which matters since "same credentials
+    /// work on other machines" points at something machine/network-specific rather than config.</summary>
+    private static string Describe(Exception ex) => ex is AmazonS3Exception s3
+        ? $"{s3.Message} (ErrorCode={s3.ErrorCode}, RequestId={s3.RequestId}, HttpStatus={(int)s3.StatusCode})"
+        : ex.Message;
+
     [RelayCommand]
     private void SelectAll()
     {
@@ -69,7 +79,7 @@ public sealed partial class BucketViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            StatusText = $"Failed to list bucket: {ex.Message}";
+            StatusText = $"Failed to list bucket: {Describe(ex)}";
         }
         finally
         {
@@ -99,7 +109,7 @@ public sealed partial class BucketViewModel : ObservableObject
                 }
                 catch (Exception ex)
                 {
-                    errors.Add($"{Path.GetFileName(path)}: {ex.Message}");
+                    errors.Add($"{Path.GetFileName(path)}: {Describe(ex)}");
                 }
             }
 
@@ -111,7 +121,7 @@ public sealed partial class BucketViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            StatusText = $"Upload failed: {ex.Message}";
+            StatusText = $"Upload failed: {Describe(ex)}";
         }
         finally
         {
@@ -141,7 +151,7 @@ public sealed partial class BucketViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            StatusText = $"Delete failed: {ex.Message}";
+            StatusText = $"Delete failed: {Describe(ex)}";
         }
         finally
         {
