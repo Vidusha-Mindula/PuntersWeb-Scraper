@@ -40,9 +40,12 @@ public sealed partial class BucketViewModel : ObservableObject
     /// tell apart otherwise-identical-looking failures (e.g. a true bucket-policy AccessDenied vs.
     /// RequestTimeTooSkewed from a wrong system clock vs. SignatureDoesNotMatch) - plain
     /// ex.Message alone often doesn't distinguish these, which matters since "same credentials
-    /// work on other machines" points at something machine/network-specific rather than config.</summary>
+    /// work on other machines" points at something machine/network-specific rather than config.
+    /// The full detail (including AmazonId2 and the raw response body) is too long for this
+    /// one-line status bar - see %LOCALAPPDATA%\PuntersScraper\s3-debug.log
+    /// (S3BucketService.LogFailure) for that.</summary>
     private static string Describe(Exception ex) => ex is AmazonS3Exception s3
-        ? $"{s3.Message} (ErrorCode={s3.ErrorCode}, RequestId={s3.RequestId}, HttpStatus={(int)s3.StatusCode})"
+        ? $"{s3.Message} (ErrorCode={s3.ErrorCode}, RequestId={s3.RequestId}, Id2={s3.AmazonId2}, HttpStatus={(int)s3.StatusCode}) - see s3-debug.log"
         : ex.Message;
 
     [RelayCommand]

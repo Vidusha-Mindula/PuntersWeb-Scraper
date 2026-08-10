@@ -24,25 +24,33 @@ public static class S3BucketService
 
         var items = new List<S3ObjectInfo>();
         string? continuationToken = null;
-        do
+        try
         {
-            var response = await client.ListObjectsV2Async(new ListObjectsV2Request
+            do
             {
-                BucketName = settings.S3BucketName,
-                Prefix = $"{PendingFolder}/",
-                ContinuationToken = continuationToken
-            }, cancellationToken);
+                var response = await client.ListObjectsV2Async(new ListObjectsV2Request
+                {
+                    BucketName = settings.S3BucketName,
+                    Prefix = $"{PendingFolder}/",
+                    ContinuationToken = continuationToken
+                }, cancellationToken);
 
-            // A key ending in "/" (e.g. "pending/" itself) is an S3 "folder marker" - a zero-byte
-            // placeholder object some tools create to represent the folder, not a real uploaded
-            // file. It has no filename once the folder prefix is stripped, so it can't be shown
-            // or deleted meaningfully - skip it entirely rather than list an empty, misleading row.
-            items.AddRange(response.S3Objects
-                .Where(o => !o.Key.EndsWith('/'))
-                .Select(o => new S3ObjectInfo(o.Key, o.Size, o.LastModified.ToUniversalTime())));
+                // A key ending in "/" (e.g. "pending/" itself) is an S3 "folder marker" - a zero-byte
+                // placeholder object some tools create to represent the folder, not a real uploaded
+                // file. It has no filename once the folder prefix is stripped, so it can't be shown
+                // or deleted meaningfully - skip it entirely rather than list an empty, misleading row.
+                items.AddRange(response.S3Objects
+                    .Where(o => !o.Key.EndsWith('/'))
+                    .Select(o => new S3ObjectInfo(o.Key, o.Size, o.LastModified.ToUniversalTime())));
 
-            continuationToken = response.IsTruncated == true ? response.NextContinuationToken : null;
-        } while (continuationToken is not null);
+                continuationToken = response.IsTruncated == true ? response.NextContinuationToken : null;
+            } while (continuationToken is not null);
+        }
+        catch (Exception ex)
+        {
+            LogFailure("ListObjects", settings, ex);
+            throw;
+        }
 
         return items.OrderByDescending(i => i.LastModifiedUtc).ToList();
     }
@@ -79,6 +87,11 @@ public static class S3BucketService
                 deleted += ex.Response.DeletedObjects.Count;
                 errors.AddRange(ex.Response.DeleteErrors.Select(e => $"{e.Key}: {e.Message}"));
             }
+            catch (Exception ex)
+            {
+                LogFailure("DeleteObjects", settings, ex);
+                throw;
+            }
         }
 
         return (deleted, errors);
@@ -96,13 +109,21 @@ public static class S3BucketService
         var fileName = Path.GetFileName(localFilePath);
         var key = $"{PendingFolder}/{fileName}";
 
-        await client.PutObjectAsync(new PutObjectRequest
+        try
         {
-            BucketName = settings.S3BucketName,
-            Key = key,
-            FilePath = localFilePath,
-            ContentType = GetContentType(fileName)
-        }, cancellationToken);
+            await client.PutObjectAsync(new PutObjectRequest
+            {
+                BucketName = settings.S3BucketName,
+                Key = key,
+                FilePath = localFilePath,
+                ContentType = GetContentType(fileName)
+            }, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            LogFailure("UploadFile", settings, ex);
+            throw;
+        }
     }
 
     private static string GetContentType(string fileName) => Path.GetExtension(fileName).ToLowerInvariant() switch
@@ -128,5 +149,47 @@ public static class S3BucketService
         };
 
         return new AmazonS3Client(settings.S3AccessKey, settings.S3SecretKey, config);
+    }
+
+    private static readonly string LogPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "PuntersScraper", "s3-debug.log");
+
+    /// <summary>Appends full diagnostic detail for a failed S3 call to a local log file — the
+    /// Bucket tab's status bar (see BucketViewModel.Describe) only has room for a one-line
+    /// summary (ErrorCode/RequestId/HttpStatus), but AmazonS3Exception carries more than that:
+    /// AmazonId2 (the x-amz-id-2 header S3-compatible backends often need to trace a denial),
+    /// ErrorType (client vs. service-side), and ResponseBody (the raw error response, which can
+    /// contain a more specific reason than the short Message alone). Never lets a logging failure
+    /// mask or replace the real exception - this always rethrows after logging (or silently
+    /// skips logging if the log write itself fails).</summary>
+    private static void LogFailure(string operation, AppSettings settings, Exception ex)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
+
+            var lines = new List<string>
+            {
+                $"[{DateTime.UtcNow:O}] {operation} failed - endpoint={settings.S3Endpoint} bucket={settings.S3BucketName}"
+            };
+
+            if (ex is AmazonS3Exception s3)
+            {
+                lines.Add($"  ErrorCode={s3.ErrorCode} ErrorType={s3.ErrorType} HttpStatus={(int)s3.StatusCode} " +
+                          $"RequestId={s3.RequestId} AmazonId2={s3.AmazonId2}");
+                if (!string.IsNullOrWhiteSpace(s3.ResponseBody))
+                    lines.Add($"  ResponseBody: {s3.ResponseBody}");
+            }
+
+            lines.Add($"  {ex}");
+            lines.Add("");
+
+            File.AppendAllLines(LogPath, lines);
+        }
+        catch
+        {
+            // Logging is best-effort - it must never mask the original failure or throw itself.
+        }
     }
 }
