@@ -1,0 +1,48 @@
+@* A small self-contained interactive "island" for the developer-notice banner. MainLayout
+   itself renders statically (a Layout's Body parameter can't cross a render-mode boundary), so
+   anything in it that needs to react to clicks or push updates has to be its own component with
+   its own @rendermode — see MainLayout.razor for where this is placed. *@
+@rendermode InteractiveServer
+@inject PuntersScraper.Web.Services.DeveloperNoticeService Notice
+@implements IDisposable
+
+@if (Notice.Current is not null)
+{
+    <div class="banner banner--notice">
+        <div>
+            <strong>@Notice.Current.Title</strong>
+            <div>@Notice.Current.Message</div>
+        </div>
+        <button type="button" class="secondary" @onclick="() => Notice.Dismiss()">I've read this — Dismiss</button>
+    </div>
+}
+
+<style>
+    .banner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 10px 24px;
+        font-size: 13px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .banner--notice {
+        background: color-mix(in srgb, var(--accent) 12%, transparent);
+    }
+</style>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Notice.Changed += OnChanged;
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Notice.Changed -= OnChanged;
+    }
+}

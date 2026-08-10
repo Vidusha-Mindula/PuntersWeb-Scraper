@@ -66,19 +66,27 @@
             Folder
             <input type="text" value="@Settings.S3Folder" @onchange="OnFolderChanged" style="width:140px;" />
         </label>
-        <label>
-            Access Key
-            <input type="text" value="@Settings.S3AccessKey" @onchange="OnAccessKeyChanged" style="width:200px;" />
-        </label>
-        <label>
-            Secret Key
-            <input type="password" value="@Settings.S3SecretKey" @onchange="OnSecretKeyChanged" style="width:200px;" />
-        </label>
     </div>
     <p style="font-size:12px;color:var(--subtle);margin-top:8px;">
         "Download ZIP" always builds the same per-meeting folder structure TroyenRaceIngestor expects.
         If "Also upload to S3" is checked, every file is uploaded to the bucket/folder above — both when you
-        click Download ZIP, and automatically the moment a scrape finishes (no click needed).
+        click Download ZIP, and automatically the moment a scrape finishes (no click needed). Access/secret
+        key are set on the <a href="/bucket">Bucket</a> page.
+    </p>
+
+    <div style="display:flex; gap:20px; flex-wrap:wrap; align-items:flex-end; margin-top:14px;">
+        <label style="flex-direction:row; align-items:center; gap:6px;">
+            <input type="checkbox" checked="@Settings.AutoExportAfterScrape" @onchange="OnAutoExportAfterScrapeChanged" /> Auto-export JSON after scrape
+        </label>
+        <label>
+            Export folder (on this server)
+            <input type="text" value="@Settings.ExportFolder" @onchange="OnExportFolderChanged" placeholder="e.g. D:\PuntersExports" style="width:260px;" />
+        </label>
+    </div>
+    <p style="font-size:12px;color:var(--subtle);margin-top:8px;">
+        This is a path on this server's own disk, not a folder picker on your machine — a hosted page has
+        no way to browse an arbitrary server path. When enabled, each meeting is written there as soon as
+        it finishes scraping, independently of the S3 upload above.
     </p>
 </div>
 
@@ -169,15 +177,15 @@
         Settings.Save();
     }
 
-    private void OnAccessKeyChanged(ChangeEventArgs e)
+    private void OnExportFolderChanged(ChangeEventArgs e)
     {
-        Settings.S3AccessKey = e.Value?.ToString() ?? Settings.S3AccessKey;
+        Settings.ExportFolder = e.Value?.ToString() ?? Settings.ExportFolder;
         Settings.Save();
     }
 
-    private void OnSecretKeyChanged(ChangeEventArgs e)
+    private void OnAutoExportAfterScrapeChanged(ChangeEventArgs e)
     {
-        Settings.S3SecretKey = e.Value?.ToString() ?? Settings.S3SecretKey;
+        Settings.AutoExportAfterScrape = e.Value is bool b && b;
         Settings.Save();
     }
 

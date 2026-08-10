@@ -1,0 +1,46 @@
+@* Self-contained interactive island for the update-available banner — see NoticeBanner.razor
+   for why this needs to be its own @rendermode component rather than living directly in the
+   (static) MainLayout. No dismiss button: this stays visible until an admin actually applies
+   the update via deploy/update.ps1, same philosophy as the desktop App's update banner. *@
+@rendermode InteractiveServer
+@inject PuntersScraper.Web.Services.UpdateAvailabilityService Updates
+@implements IDisposable
+
+@if (Updates.Current is not null)
+{
+    <div class="banner banner--update">
+        A newer version (web-v@Updates.Current.Version) is available.
+        <a href="@Updates.Current.ReleaseUrl" target="_blank" rel="noopener">View release</a>
+        — ask an admin to run <code>deploy/update.ps1</code> on this server to apply it.
+    </div>
+}
+
+<style>
+    .banner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 10px 24px;
+        font-size: 13px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .banner--update {
+        background: color-mix(in srgb, gold 15%, transparent);
+    }
+</style>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Updates.Changed += OnChanged;
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Updates.Changed -= OnChanged;
+    }
+}

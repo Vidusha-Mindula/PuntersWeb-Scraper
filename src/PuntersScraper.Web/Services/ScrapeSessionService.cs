@@ -112,15 +112,16 @@ public sealed class ScrapeSessionService
             IProgress<string> progress = new Progress<string>(SetStatus);
             var disciplineFailures = new List<string>();
 
-            // Loaded once up front so each meeting can upload to S3 as soon as its races finish
-            // scraping, instead of only ever uploading everything in one go at the very end (see
-            // the upload call in the race-detail loop below) — a long multi-meeting scrape that
-            // gets interrupted partway through would otherwise lose every meeting it had already
-            // finished, which matters more here than on the desktop apps since this service is
-            // meant for unattended/scheduled runs.
-            var s3Settings = WebAppSettings.Load();
+            // Loaded once up front so each meeting can upload to S3 (and/or export to a local
+            // folder) as soon as its races finish scraping, instead of only ever doing so in one
+            // go at the very end (see the calls in the race-detail loop below) — a long
+            // multi-meeting scrape that gets interrupted partway through would otherwise lose
+            // every meeting it had already finished, which matters more here than on the desktop
+            // apps since this service is meant for unattended/scheduled runs.
+            var settings = WebAppSettings.Load();
             var totalS3Uploaded = 0;
             var totalS3Failed = 0;
+            var totalExported = 0;
 
             // Headless is deliberately not exposed here: this scraper only reliably gets past
             // Punters' bot-detection in a real (non-headless) Chromium window positioned
@@ -200,14 +201,25 @@ public sealed class ScrapeSessionService
                         NotifyChanged();
                     }
 
-                    if (s3Settings.UploadToS3)
+                    if (settings.UploadToS3)
                     {
-                        var (uploaded, failed) = await UploadMeetingToS3Async(s3Settings, discipline, row.Group, row.Meeting);
+                        var (uploaded, failed) = await UploadMeetingToS3Async(settings, discipline, row.Group, row.Meeting);
                         totalS3Uploaded += uploaded;
                         totalS3Failed += failed;
                         progress.Report(
                             $"[P-{discipline.Code()}] Uploaded {row.MeetingName} to S3: {uploaded} file(s)." +
                             (failed > 0 ? $" {failed} failed." : ""));
+                    }
+
+                    // Deliberately independent of the S3-upload block above rather than coupled
+                    // together the way the desktop App's single "export" step does both at once
+                    // — keeping them separate avoids double-uploading a file when both toggles
+                    // are on, and suits this service's unattended/scheduled use case better.
+                    if (settings.AutoExportAfterScrape && !string.IsNullOrWhiteSpace(settings.ExportFolder))
+                    {
+                        var exported = await ExportMeetingToFolderAsync(settings.ExportFolder, discipline, row.Group, row.Meeting);
+                        totalExported += exported;
+                        progress.Report($"[P-{discipline.Code()}] Exported {row.MeetingName} to folder: {exported} file(s).");
                     }
                 }
             }
@@ -229,14 +241,21 @@ public sealed class ScrapeSessionService
                 SetStatus("Finished, but no meetings matched for the selected date/discipline(s)/filters.");
             }
 
-            // Each meeting was already uploaded to S3 as soon as its races finished scraping
-            // (see the upload call in the race-detail loop above) — this just reports the
-            // running totals from those per-meeting uploads.
-            if (_lastResults.Count > 0 && s3Settings.UploadToS3)
+            // Each meeting was already uploaded to S3 / exported to a folder as soon as its
+            // races finished scraping (see the calls in the race-detail loop above) — this just
+            // reports the running totals from those per-meeting actions.
+            if (_lastResults.Count > 0 && (settings.UploadToS3 || settings.AutoExportAfterScrape))
             {
-                StatusText += totalS3Failed > 0
-                    ? $" Uploaded {totalS3Uploaded} file(s) to S3 ({totalS3Failed} failed — see above)."
-                    : $" Uploaded {totalS3Uploaded} file(s) to S3.";
+                if (settings.UploadToS3)
+                {
+                    StatusText += totalS3Failed > 0
+                        ? $" Uploaded {totalS3Uploaded} file(s) to S3 ({totalS3Failed} failed — see above)."
+                        : $" Uploaded {totalS3Uploaded} file(s) to S3.";
+                }
+                if (settings.AutoExportAfterScrape)
+                {
+                    StatusText += $" Exported {totalExported} file(s) to folder.";
+                }
                 NotifyChanged();
             }
         }
@@ -394,7 +413,8 @@ public sealed class ScrapeSessionService
         }
         catch (Exception ex)
         {
-            SetStatus($"S3 upload failed for {fileName}: {ex.Message}");
+            S3BucketService.LogFailure("UploadJson", settings, ex);
+            SetStatus($"S3 upload failed for {fileName}: {S3BucketService.DescribeS3Exception(ex)}");
             return (0, 1);
         }
     }
@@ -414,9 +434,52 @@ public sealed class ScrapeSessionService
         }
         catch (Exception ex)
         {
-            SetStatus($"S3 upload failed for {fileName}: {ex.Message}");
+            S3BucketService.LogFailure("UploadJson", settings, ex);
+            SetStatus($"S3 upload failed for {fileName}: {S3BucketService.DescribeS3Exception(ex)}");
             return (0, 1);
         }
+    }
+
+    /// <summary>Writes a single meeting straight to a folder on this server's disk (no S3
+    /// involved — that's <see cref="UploadMeetingToS3Async"/>) — called directly from
+    /// <see cref="ScrapeAsync"/> as soon as each meeting's races finish, same per-meeting timing
+    /// as the S3 upload, just independent of it.</summary>
+    private async Task<int> ExportMeetingToFolderAsync(
+        string baseFolder, Discipline discipline, string group, Meeting meeting)
+    {
+        var meetingFolderName = Slugify(meeting.Slug ?? meeting.Name ?? meeting.Id ?? "meeting");
+        var meetingFolder = Path.Combine(baseFolder, meetingFolderName);
+        Directory.CreateDirectory(meetingFolder);
+        var fileCount = 0;
+
+        var meetingPayload = new
+        {
+            data = new
+            {
+                meetingsGrouped = new[]
+                {
+                    new { group, meetings = new[] { BuildMeetingExport(meeting) } }
+                }
+            }
+        };
+
+        await File.WriteAllTextAsync(
+            Path.Combine(meetingFolder, MeetingFileName(discipline)),
+            JsonSerializer.Serialize(meetingPayload, ScraperJsonOptions.Write));
+        fileCount++;
+
+        foreach (var raceEvent in meeting.Events)
+        {
+            if (raceEvent.Id is null || !_raceDetails.TryGetValue(raceEvent.Id, out var detail))
+                continue;
+
+            await File.WriteAllTextAsync(
+                Path.Combine(meetingFolder, DataDumpFileName(detail.RaceNumber)),
+                JsonSerializer.Serialize(detail, ScraperJsonOptions.Write));
+            fileCount++;
+        }
+
+        return fileCount;
     }
 
     private static string MeetingFileName(Discipline discipline) =>

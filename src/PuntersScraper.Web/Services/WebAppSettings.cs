@@ -23,6 +23,18 @@ public sealed class WebAppSettings
     public string S3BucketName { get; set; } = "troyen-gen-prod";
     public string S3Folder { get; set; } = "pending";
 
+    /// <summary>A path on this server's own filesystem to auto-write each meeting's JSON to as
+    /// soon as it's scraped — the Web equivalent of the App's "Download folder", except there's
+    /// no native folder-picker a hosted page can show for an arbitrary server path, so this is a
+    /// typed path rather than a browsed one.</summary>
+    public string ExportFolder { get; set; } = "";
+    public bool AutoExportAfterScrape { get; set; }
+
+    /// <summary>Id of the last developer notice (see DeveloperNoticeChecker) an admin explicitly
+    /// dismissed. Shared across every user of this deployment, same as the rest of this class —
+    /// unlike the App, where it's per-machine.</summary>
+    public string LastSeenNoticeId { get; set; } = "";
+
     private static string FilePath => Path.Combine(AppContext.BaseDirectory, "App_Data", "settings.json");
 
     public static WebAppSettings Load()

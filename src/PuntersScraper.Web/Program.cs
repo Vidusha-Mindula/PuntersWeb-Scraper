@@ -21,6 +21,9 @@ if (string.IsNullOrWhiteSpace(adminOptions.Username) || string.IsNullOrWhiteSpac
 
 builder.Services.AddSingleton(adminOptions);
 builder.Services.AddSingleton<ScrapeSessionService>();
+builder.Services.AddSingleton<DeveloperNoticeService>();
+builder.Services.AddSingleton<UpdateAvailabilityService>();
+builder.Services.AddHostedService<PeriodicChecksHostedService>();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>

@@ -8,16 +8,32 @@
 <div class="panel">
     <h2 style="font-size:15px;">S3 Bucket</h2>
     <p style="font-size:12px;color:var(--subtle);max-width:640px;margin-top:0;">
-        Browse and delete files already uploaded to <strong>@Settings.S3BucketName</strong>
-        (folder: <strong>@(string.IsNullOrEmpty(Settings.S3Folder) ? "/" : Settings.S3Folder)</strong>).
-        Deleting a file here removes it from S3 permanently — this cannot be undone.
+        Browse, delete, and manually upload files in the <strong>@PuntersScraper.Web.Services.S3BucketService.PendingFolder/</strong>
+        folder of <strong>@Settings.S3BucketName</strong> — the one folder this app itself reads/writes
+        (scrape auto-uploads and manual uploads alike land here). Deleting a file here removes it from S3
+        permanently — this cannot be undone.
     </p>
+
+    <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-end; margin-bottom:12px;">
+        <label>
+            Access Key
+            <input type="text" value="@Settings.S3AccessKey" @onchange="OnAccessKeyChanged" style="width:200px;" />
+        </label>
+        <label>
+            Secret Key
+            <input type="password" value="@Settings.S3SecretKey" @onchange="OnSecretKeyChanged" style="width:200px;" />
+        </label>
+    </div>
 
     <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
         <button type="button" class="secondary" @onclick="LoadAsync" disabled="@IsBusy">Refresh</button>
         <button type="button" @onclick="DeleteSelectedAsync" disabled="@(IsBusy || SelectedKeys.Count == 0)">
             Delete selected (@SelectedKeys.Count)
         </button>
+        <label class="secondary" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+            Upload...
+            <InputFile OnChange="OnFilesSelectedAsync" multiple disabled="@IsBusy" style="display:none;" />
+        </label>
         <span style="font-size:12px;color:var(--subtle);">@StatusText</span>
         @if (IsBusy)
         {
@@ -91,12 +107,53 @@
         }
         catch (Exception ex)
         {
-            StatusText = $"Failed to list bucket: {ex.Message}";
+            StatusText = $"Failed to list bucket: {PuntersScraper.Web.Services.S3BucketService.DescribeS3Exception(ex)}";
         }
         finally
         {
             IsBusy = false;
         }
+    }
+
+    private void OnAccessKeyChanged(ChangeEventArgs e)
+    {
+        Settings.S3AccessKey = e.Value?.ToString() ?? Settings.S3AccessKey;
+        Settings.Save();
+    }
+
+    private void OnSecretKeyChanged(ChangeEventArgs e)
+    {
+        Settings.S3SecretKey = e.Value?.ToString() ?? Settings.S3SecretKey;
+        Settings.Save();
+    }
+
+    private async Task OnFilesSelectedAsync(InputFileChangeEventArgs e)
+    {
+        IsBusy = true;
+        StatusText = $"Uploading {e.FileCount} file(s)...";
+        StateHasChanged();
+
+        var uploaded = 0;
+        var errors = new List<string>();
+        foreach (var file in e.GetMultipleFiles(maximumFileCount: 32))
+        {
+            try
+            {
+                await using var stream = file.OpenReadStream(maxAllowedSize: 50_000_000);
+                await PuntersScraper.Web.Services.S3BucketService.UploadFileAsync(Settings, stream, file.Name);
+                uploaded++;
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"{file.Name}: {PuntersScraper.Web.Services.S3BucketService.DescribeS3Exception(ex)}");
+            }
+        }
+
+        StatusText = errors.Count > 0
+            ? $"Uploaded {uploaded} file(s). {errors.Count} failed: {string.Join(" | ", errors)}"
+            : $"Uploaded {uploaded} file(s).";
+
+        await LoadAsync();
     }
 
     private void ToggleSelectAll(ChangeEventArgs e)
@@ -151,7 +208,7 @@
         }
         catch (Exception ex)
         {
-            StatusText = $"Delete failed: {ex.Message}";
+            StatusText = $"Delete failed: {PuntersScraper.Web.Services.S3BucketService.DescribeS3Exception(ex)}";
         }
         finally
         {
