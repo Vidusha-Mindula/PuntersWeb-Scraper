@@ -12,6 +12,9 @@ namespace PuntersScraper.App.ViewModels;
 /// whatever bucket/keys are currently configured on the main window.</summary>
 public sealed partial class BucketViewModel : ObservableObject
 {
+    private readonly AppSettings _settings = AppSettings.Load();
+    private bool _loadingSettings;
+
     public ObservableCollection<S3ObjectRow> Objects { get; } = new();
 
     [ObservableProperty]
@@ -22,6 +25,24 @@ public sealed partial class BucketViewModel : ObservableObject
 
     [ObservableProperty]
     private string bucketName = "";
+
+    /// <summary>S3 access key, editable here (rather than fixed at install time) so credentials
+    /// can be updated without reinstalling. Lives on the Bucket tab, next to the bucket it
+    /// actually authenticates against, rather than on the Scraper tab.</summary>
+    [ObservableProperty]
+    private string s3AccessKey = "";
+
+    /// <summary>S3 secret key — see <see cref="S3AccessKey"/>.</summary>
+    [ObservableProperty]
+    private string s3SecretKey = "";
+
+    public BucketViewModel()
+    {
+        _loadingSettings = true;
+        S3AccessKey = _settings.S3AccessKey;
+        S3SecretKey = _settings.S3SecretKey;
+        _loadingSettings = false;
+    }
 
     public int SelectedCount => Objects.Count(o => o.IsSelected);
     public string DeleteSelectedLabel => $"Delete selected ({SelectedCount})";
@@ -35,6 +56,20 @@ public sealed partial class BucketViewModel : ObservableObject
     }
 
     partial void OnIsBusyChanged(bool value) => OnPropertyChanged(nameof(CanDeleteSelected));
+
+    partial void OnS3AccessKeyChanged(string value)
+    {
+        if (_loadingSettings) return;
+        _settings.S3AccessKey = value;
+        _settings.Save();
+    }
+
+    partial void OnS3SecretKeyChanged(string value)
+    {
+        if (_loadingSettings) return;
+        _settings.S3SecretKey = value;
+        _settings.Save();
+    }
 
     /// <summary>Amazon's SDK exception carries the actual S3 error code and request id, which
     /// tell apart otherwise-identical-looking failures (e.g. a true bucket-policy AccessDenied vs.

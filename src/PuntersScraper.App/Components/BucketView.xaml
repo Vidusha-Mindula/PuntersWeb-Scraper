@@ -26,6 +26,16 @@
             <TextBlock FontSize="11.5" Foreground="{StaticResource SubtleTextBrush}" Margin="0,4,0,0" TextWrapping="Wrap">
                 Browse and delete files in the "pending" folder — the only folder this app reads or writes. Deleting a file here removes it from S3 permanently — this cannot be undone.
             </TextBlock>
+
+            <StackPanel Orientation="Horizontal" Margin="0,10,0,0" VerticalAlignment="Center">
+                <TextBlock Text="Access key" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
+                <TextBox Text="{Binding S3AccessKey, UpdateSourceTrigger=PropertyChanged}" Width="220" Margin="0,0,24,0"
+                         ToolTip="S3 access key for this bucket. Remembered across app restarts (same plaintext settings.json as everything else here)." />
+
+                <TextBlock Text="Secret key" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
+                <TextBox Text="{Binding S3SecretKey, UpdateSourceTrigger=PropertyChanged}" Width="260"
+                         ToolTip="S3 secret key for this bucket. Remembered across app restarts (same plaintext settings.json as everything else here)." />
+            </StackPanel>
         </StackPanel>
 
         <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10" VerticalAlignment="Center">

@@ -33,8 +33,6 @@ public sealed partial class MainViewModel : ObservableObject
         AutoExportAfterScrape = _settings.AutoExportAfterScrape;
         UploadToS3 = _settings.UploadToS3;
         S3BucketName = _settings.S3BucketName;
-        S3AccessKey = _settings.S3AccessKey;
-        S3SecretKey = _settings.S3SecretKey;
         _loadingSettings = false;
 
         _ = CheckForUpdatesAsync();
@@ -95,16 +93,6 @@ public sealed partial class MainViewModel : ObservableObject
     /// buckets. Remembered across app restarts.</summary>
     [ObservableProperty]
     private string s3BucketName = "";
-
-    /// <summary>S3 access key, editable in the UI rather than fixed at install time — lets a
-    /// machine be repointed at different credentials without reinstalling. Remembered across app
-    /// restarts (same plaintext settings.json as everything else here — see AppSettings).</summary>
-    [ObservableProperty]
-    private string s3AccessKey = "";
-
-    /// <summary>S3 secret key — see <see cref="S3AccessKey"/>.</summary>
-    [ObservableProperty]
-    private string s3SecretKey = "";
 
     /// <summary>True once a newer release than the one currently running has been found on
     /// GitHub — drives the update banner's visibility in MainWindow.</summary>
@@ -193,20 +181,6 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (_loadingSettings) return;
         _settings.S3BucketName = value;
-        _settings.Save();
-    }
-
-    partial void OnS3AccessKeyChanged(string value)
-    {
-        if (_loadingSettings) return;
-        _settings.S3AccessKey = value;
-        _settings.Save();
-    }
-
-    partial void OnS3SecretKeyChanged(string value)
-    {
-        if (_loadingSettings) return;
-        _settings.S3SecretKey = value;
         _settings.Save();
     }
 

@@ -151,17 +151,7 @@
 
                                 <TextBlock Text="Bucket" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
                                 <TextBox Text="{Binding S3BucketName, UpdateSourceTrigger=PropertyChanged}" Width="180"
-                                         ToolTip="S3 bucket name to upload to. Remembered across app restarts." />
-                            </StackPanel>
-
-                            <StackPanel Orientation="Horizontal" Margin="0,12,0,0" VerticalAlignment="Center">
-                                <TextBlock Text="Access key" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
-                                <TextBox Text="{Binding S3AccessKey, UpdateSourceTrigger=PropertyChanged}" Width="220" Margin="0,0,24,0"
-                                         ToolTip="S3 access key for the bucket above. Remembered across app restarts (same plaintext settings.json as everything else on this screen)." />
-
-                                <TextBlock Text="Secret key" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
-                                <TextBox Text="{Binding S3SecretKey, UpdateSourceTrigger=PropertyChanged}" Width="260"
-                                         ToolTip="S3 secret key for the bucket above. Remembered across app restarts (same plaintext settings.json as everything else on this screen)." />
+                                         ToolTip="S3 bucket name to upload to. Remembered across app restarts. Access/secret keys are configured on the Bucket tab." />
                             </StackPanel>
                         </StackPanel>
                     </Border>
