@@ -3,8 +3,8 @@
     into a single Inno Setup installer (PuntersScraperSetup-<version>.exe).
 
     Usage:
-        powershell installer/build-punters-installer.ps1
-        powershell installer/build-punters-installer.ps1 -Version 1.2.0
+        powershell installer/build-punters-installer.ps1                  (reads version from VERSION at repo root)
+        powershell installer/build-punters-installer.ps1 -Version 1.2.0   (overrides it)
 
     S3AccessKey/S3SecretKey are baked into the installer (it seeds a default
     %LOCALAPPDATA%\PuntersScraper\settings.json on first install — see the [Code] section in
@@ -15,7 +15,7 @@
     before this existed.
 #>
 param(
-    [string]$Version = "2.5.0",
+    [string]$Version,
     [string]$Configuration = "Release",
     [string]$S3AccessKey = $env:PUNTERS_S3_ACCESS_KEY,
     [string]$S3SecretKey = $env:PUNTERS_S3_SECRET_KEY
@@ -25,6 +25,15 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $installerDir = Join-Path $repoRoot "installer"
+
+if (-not $Version) {
+    $versionFile = Join-Path $repoRoot "VERSION"
+    if (Test-Path $versionFile) {
+        $Version = (Get-Content $versionFile -Raw).Trim()
+    } else {
+        throw "No -Version given and no VERSION file found at $versionFile."
+    }
+}
 $publishDir = Join-Path $installerDir "publish-punters"
 $outputDir = Join-Path $installerDir "output"
 $appProject = Join-Path $repoRoot "src\PuntersScraper.App\PuntersScraper.App.csproj"

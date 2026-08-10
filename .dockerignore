@@ -1,0 +1,10 @@
+.git/
+.vs/
+bin/
+obj/
+installer/publish-punters/
+installer/output/
+deploy/publish-web/
+deploy/*.zip
+samples/
+*.md

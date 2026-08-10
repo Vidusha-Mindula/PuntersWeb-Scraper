@@ -1,28 +1,34 @@
 @echo off
 setlocal enabledelayedexpansion
 
-:: Cuts a full release: builds the Inno Setup installer, then creates a matching GitHub Release
-:: (tag + uploaded .exe + auto-generated notes) via the GitHub CLI. Every running copy of
-:: PuntersScraper.App checks GitHub's releases/latest API on startup (see
-:: src/PuntersScraper.App/Services/UpdateChecker.cs) and shows an "Update available" banner once
-:: this is live, so this script is the whole "push an update" workflow in one step.
+:: Cuts a release of PuntersScraper.Web: builds the self-contained win-x64 deploy zip (via
+:: publish-web.ps1), then creates a matching GitHub Release (tag + uploaded zip + auto-generated
+:: notes) via the GitHub CLI.
+::
+:: Tagged web-vX.Y.Z (NOT vX.Y.Z) and marked --prerelease so it never becomes GitHub's
+:: "/releases/latest" - PuntersScraper.App's UpdateChecker polls that exact endpoint to find new
+:: App versions (see src/PuntersScraper.App/Services/UpdateChecker.cs) and expects a vX.Y.Z tag.
+:: If a Web release became "latest" instead, the App's update check would silently go quiet
+:: until the next App release. Shares the SAME version number as the App - both read/write the
+:: repo-root VERSION file (the one installer\release.bat also uses) - only the git tag prefix
+:: and the GitHub "latest" flag differ between the two release scripts.
 ::
 :: Usage:
-::     installer\release.bat            (uses the version in the VERSION file at repo root)
-::     installer\release.bat 3.0.0      (overrides it, and updates the VERSION file to match)
+::     deploy\release-web.bat            (uses the version in the repo-root VERSION file)
+::     deploy\release-web.bat 1.1.0      (overrides it, and updates VERSION to match)
 ::
 :: Requires the working tree to be clean (everything already committed AND pushed) so the release
 :: always matches something actually in git history. First run also needs the GitHub CLI (gh) --
 :: this script installs it via winget if missing, and signs you in via a browser if needed.
 
-set "INSTALLER_DIR=%~dp0"
-set "REPO_ROOT=%INSTALLER_DIR%.."
+set "DEPLOY_DIR=%~dp0"
+set "REPO_ROOT=%DEPLOY_DIR%.."
 set "VERSION_FILE=%REPO_ROOT%\VERSION"
 
 if "%~1"=="" (
     if not exist "%VERSION_FILE%" (
-        echo Usage: release.bat VERSION
-        echo Example: release.bat 3.0.0
+        echo Usage: release-web.bat VERSION
+        echo Example: release-web.bat 1.1.0
         echo Or create a VERSION file at the repo root containing the version to release.
         exit /b 1
     )
@@ -31,10 +37,10 @@ if "%~1"=="" (
     set "VERSION=%~1"
 )
 
-set "OUTPUT_EXE=%INSTALLER_DIR%output\PuntersScraperSetup-%VERSION%.exe"
+set "ZIP_PATH=%DEPLOY_DIR%PuntersScraper.Web-deploy.zip"
 
 echo ==============================================
-echo  Releasing Punters Meetings Scraper v%VERSION%
+echo  Releasing Punters Scraper Web v%VERSION%
 echo ==============================================
 
 pushd "%REPO_ROOT%" || exit /b 1
@@ -88,42 +94,41 @@ if errorlevel 1 (
     )
 )
 
-:: --- 4. Build the installer ---
+:: --- 4. Build the deploy zip ---
 echo.
-echo ==^> Building installer v%VERSION%...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%INSTALLER_DIR%build-punters-installer.ps1" -Version %VERSION%
+echo ==^> Building Web deploy package v%VERSION%...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%DEPLOY_DIR%publish-web.ps1" -Version %VERSION%
 if errorlevel 1 (
-    echo ERROR: Installer build failed.
+    echo ERROR: Web publish failed.
     popd
     exit /b 1
 )
 
-if not exist "%OUTPUT_EXE%" (
-    echo ERROR: Expected installer not found at %OUTPUT_EXE%
+if not exist "%ZIP_PATH%" (
+    echo ERROR: Expected zip not found at %ZIP_PATH%
     popd
     exit /b 1
 )
 
-:: --- 5. Create the GitHub Release (gh creates + pushes the vX.Y.Z tag against the current
-::        commit automatically since it doesn't exist yet) ---
+:: --- 5. Create the GitHub Release (--prerelease so it never becomes /releases/latest - see the
+::        note at the top of this file for why that matters) ---
 echo.
-echo ==^> Creating GitHub Release v%VERSION%...
-gh release create v%VERSION% "%OUTPUT_EXE%" --title "v%VERSION%" --generate-notes
+echo ==^> Creating GitHub Release web-v%VERSION%...
+gh release create web-v%VERSION% "%ZIP_PATH%" --title "Web v%VERSION%" --generate-notes --prerelease
 if errorlevel 1 (
-    echo ERROR: gh release create failed. If a v%VERSION% tag was left behind, remove it with:
-    echo     git push --delete origin v%VERSION% ^&^& git tag -d v%VERSION%
+    echo ERROR: gh release create failed. If a web-v%VERSION% tag was left behind, remove it with:
+    echo     git push --delete origin web-v%VERSION% ^&^& git tag -d web-v%VERSION%
     echo before retrying.
     popd
     exit /b 1
 )
 
-:: --- 6. Keep the VERSION file in sync with what was just released (only touches git if the
-::        file actually changed, e.g. you passed an explicit version that differs from it) ---
+:: --- 6. Keep the VERSION file in sync with what was just released ---
 echo %VERSION%> "%VERSION_FILE%"
 git diff --quiet -- "%VERSION_FILE%"
 if errorlevel 1 (
     git add "%VERSION_FILE%"
-    git commit -m "Bump version to %VERSION%" --quiet
+    git commit -m "Bump Web version to %VERSION%" --quiet
     git push origin main --quiet
     if errorlevel 1 (
         echo WARNING: Release succeeded, but committing/pushing the VERSION bump failed.
@@ -134,8 +139,8 @@ if errorlevel 1 (
 popd
 echo.
 echo ==============================================
-echo  Done. v%VERSION% is live - every running copy of
-echo  the app will show the update banner on next launch.
-echo  VERSION file is now %VERSION% - bump it before the
-echo  next release.
+echo  Done. web-v%VERSION% is live on GitHub Releases
+echo  (as a pre-release, so it won't interfere with the
+echo  desktop App's own update checks). Download the zip
+echo  from the release page and deploy per deploy/README.md.
 echo ==============================================

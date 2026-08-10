@@ -3,8 +3,10 @@ using System.Text.Json;
 
 namespace PuntersScraper.App;
 
-/// <summary>Small persisted user-preference blob, stored outside the install folder so it
-/// survives reinstalls/updates. Kept in its own "PuntersScraper" folder.</summary>
+/// <summary>Small persisted user-preference blob, stored outside the install folder in its own
+/// "PuntersScraper" folder. NOT preserved across installs/updates on purpose — the installer
+/// (see installer/PuntersScraper.iss's WriteDefaultSettings) overwrites this file with baked-in
+/// defaults on every version, to stop per-machine config drift from silently surviving updates.</summary>
 public sealed class AppSettings
 {
     public string DownloadFolder { get; set; } = "";
@@ -18,7 +20,7 @@ public sealed class AppSettings
     // they're saved locally and never checked into source control.
     public string S3AccessKey { get; set; } = "";
     public string S3SecretKey { get; set; } = "";
-    public string S3BucketName { get; set; } = "punter-web-scraper";
+    public string S3BucketName { get; set; } = "troyen-gen-prod";
     public string S3Folder { get; set; } = "pending";
 
     /// <summary>Id of the last developer notice (see DeveloperNoticeChecker) the user explicitly

@@ -1,0 +1,40 @@
+# syntax=docker/dockerfile:1
+#
+# Builds a VERSIONED BUILD ARTIFACT of PuntersScraper.Web -- this image is not meant to be
+# `docker run` in production. The scraper needs a real, non-headless Chromium window inside an
+# interactive Windows desktop session to get past Punters' bot detection (see deploy/README.md),
+# which no standard container -- Linux or Windows -- provides. That's the same reason production
+# deployment uses a logged-in Scheduled Task instead of a Windows Service.
+#
+# What this DOES give you: the exact same self-contained win-x64 build that deploy/publish-web.ps1
+# produces, wrapped in an image tagged with the version from the repo-root VERSION file (shared
+# with the desktop App - see installer/release.bat), so you get a versioned, content-addressable
+# build record (in a registry, if you push it) without needing a machine with the .NET SDK
+# installed. Pull the actual build out of the image with:
+#     docker create --name punters-web-extract puntersscraper-web:<version>
+#     docker cp punters-web-extract:/publish ./publish-web
+#     docker rm punters-web-extract
+#
+# Built via docker-compose.yml / deploy/docker-build.ps1, which read the version from the
+# repo-root VERSION file for you.
+
+ARG VERSION=0.0.0
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+ARG VERSION
+WORKDIR /src
+COPY . .
+RUN dotnet publish src/PuntersScraper.Web/PuntersScraper.Web.csproj \
+    -c Release \
+    -r win-x64 \
+    --self-contained true \
+    -p:Version=${VERSION} \
+    -o /app/publish
+
+# scratch has no shell/runtime -- this stage is a storage/versioning artifact, never `docker run`.
+FROM scratch AS final
+ARG VERSION
+LABEL org.opencontainers.image.title="PuntersScraper.Web" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.description="Versioned win-x64 build artifact - not runnable, see deploy/Dockerfile.web"
+COPY --from=build /app/publish /publish

@@ -63,27 +63,26 @@ Filename: "powershell.exe"; \
 Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall
 
 [Code]
-// Seeds a default settings.json (same shape AppSettings.cs itself saves) so a fresh install
-// already has S3 access/secret keys configured, without the user having to type them into the
-// app. Only writes it if nothing is there yet — an existing settings.json (a reinstall/upgrade
-// on a machine that's already been configured, possibly with different keys/bucket) is never
-// touched or overwritten.
-procedure WriteDefaultSettingsIfMissing;
+// Overwrites settings.json (same shape AppSettings.cs itself saves) with the baked-in defaults
+// on every install AND every update — deliberately, not just on a fresh install. A machine's
+// settings.json can drift (e.g. someone typing in a different bucket name, or keys going stale)
+// and silently keep failing update after update since nothing ever reset it; resetting on every
+// version keeps every machine on known-good config rather than accumulating per-machine drift.
+// This wipes ALL saved preferences on that machine (download folder, auto-export toggle, etc.),
+// not just the S3 fields — intentional, so there's exactly one reset path to reason about.
+procedure WriteDefaultSettings;
 var
   SettingsDir, SettingsPath, Json: string;
 begin
   SettingsDir := ExpandConstant('{localappdata}\PuntersScraper');
   SettingsPath := SettingsDir + '\settings.json';
 
-  if FileExists(SettingsPath) then
-    Exit;
-
   if not DirExists(SettingsDir) then
     ForceDirectories(SettingsDir);
 
   Json := '{"DownloadFolder":"","AutoExportAfterScrape":false,"UploadToS3":false,' +
     '"S3Endpoint":"https://s3.troyendata.com","S3AccessKey":"{#S3AccessKey}",' +
-    '"S3SecretKey":"{#S3SecretKey}","S3BucketName":"punter-web-scraper","S3Folder":"pending"}';
+    '"S3SecretKey":"{#S3SecretKey}","S3BucketName":"troyen-gen-prod","S3Folder":"pending"}';
 
   SaveStringToFile(SettingsPath, Json, False);
 end;
@@ -91,5 +90,5 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
-    WriteDefaultSettingsIfMissing;
+    WriteDefaultSettings;
 end;

@@ -20,7 +20,7 @@ public sealed class WebAppSettings
     // (gitignored, server-local) rather than ever living in source control.
     public string S3AccessKey { get; set; } = "";
     public string S3SecretKey { get; set; } = "";
-    public string S3BucketName { get; set; } = "punter-web-scraper";
+    public string S3BucketName { get; set; } = "troyen-gen-prod";
     public string S3Folder { get; set; } = "pending";
 
     private static string FilePath => Path.Combine(AppContext.BaseDirectory, "App_Data", "settings.json");
