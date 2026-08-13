@@ -83,6 +83,19 @@ public sealed class ScrapeSessionService
         _cts.Cancel();
     }
 
+    /// <summary>Clears the results grid/status (from either a finished, stopped, or failed run) —
+    /// shared by both the Scraper and Auto Scraper pages since they show the same
+    /// <see cref="Meetings"/> list. No-ops while a scrape is running so it can't be used to wipe
+    /// an in-progress run's rows out from under it — callers should also disable the button then.</summary>
+    public void ClearResults()
+    {
+        if (IsBusy) return;
+        Meetings.Clear();
+        _lastResults.Clear();
+        _raceDetails.Clear();
+        SetStatus("Ready.");
+    }
+
     /// <param name="forceUploadToS3">Auto-scrape always passes true here — its whole point is
     /// unattended delivery into the bucket for TroyenRaceIngestor, so it uploads regardless of
     /// whether the manual Scraper page's "Also upload to S3" checkbox happens to be on.</param>

@@ -103,6 +103,7 @@
     <button type="button" class="secondary" @onclick="Session.RequestStop" disabled="@(!Session.IsBusy || Session.IsStopping)">
         @(Session.IsStopping ? "Stopping..." : "Stop")
     </button>
+    <button type="button" class="secondary" @onclick="Session.ClearResults" disabled="@Session.IsBusy">Clear</button>
     @if (Session.IsBusy)
     {
         <span class="spinner"></span>

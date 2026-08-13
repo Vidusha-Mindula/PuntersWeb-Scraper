@@ -127,6 +127,7 @@
 
 <div class="status-bar">
     <span>@Session.StatusText</span>
+    <button type="button" class="secondary" @onclick="Session.ClearResults" disabled="@Session.IsBusy">Clear</button>
     @if (Session.IsBusy)
     {
         <span class="spinner"></span>

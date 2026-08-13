@@ -193,6 +193,7 @@ public sealed partial class MainViewModel : ObservableObject
         ScrapeCommand.NotifyCanExecuteChanged();
         ExportJsonCommand.NotifyCanExecuteChanged();
         StopCommand.NotifyCanExecuteChanged();
+        ClearResultsCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnIsStoppingChanged(bool value) => StopCommand.NotifyCanExecuteChanged();
@@ -211,6 +212,21 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     private bool CanStop() => IsBusy && !IsStopping;
+
+    /// <summary>Clears the results grid/status (from either a finished, stopped, or failed run) —
+    /// shared by both the Scraper and Auto Scraper tabs since they show the same
+    /// <see cref="Meetings"/> collection. Disabled while a scrape is running so it can't be used
+    /// to wipe an in-progress run's rows out from under it.</summary>
+    [RelayCommand(CanExecute = nameof(CanClearResults))]
+    private void ClearResults()
+    {
+        Meetings.Clear();
+        _lastResults.Clear();
+        _raceDetails.Clear();
+        StatusText = "Ready.";
+    }
+
+    private bool CanClearResults() => !IsBusy;
 
     partial void OnDownloadFolderChanged(string value)
     {

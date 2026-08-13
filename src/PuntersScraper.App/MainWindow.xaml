@@ -194,11 +194,14 @@
                     <Grid Grid.Row="2">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="180" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="{Binding StatusText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                                    Foreground="{StaticResource SubtleTextBrush}" />
-                        <ProgressBar Grid.Column="1" Width="180" IsIndeterminate="{Binding IsBusy}"
+                        <Button Grid.Column="1" Content="Clear" Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding ClearResultsCommand}" Margin="0,0,14,0"
+                                ToolTip="Clears the grid and status below — only available once nothing is running." />
+                        <ProgressBar Grid.Column="2" Width="180" IsIndeterminate="{Binding IsBusy}"
                                      Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
                     </Grid>
                 </Grid>
@@ -285,13 +288,16 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="180" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="{Binding StatusText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                                    Foreground="{StaticResource SubtleTextBrush}" />
-                        <Button Grid.Column="1" Content="Stop" Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding StopCommand}" Margin="0,0,14,0"
+                        <Button Grid.Column="1" Content="Stop" Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding StopCommand}" Margin="0,0,10,0"
                                 ToolTip="Cancels the running scrape (auto or manual — they're the same run) as soon as the current in-flight request finishes." />
-                        <ProgressBar Grid.Column="2" Width="180" IsIndeterminate="{Binding IsBusy}"
+                        <Button Grid.Column="2" Content="Clear" Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding ClearResultsCommand}" Margin="0,0,14,0"
+                                ToolTip="Clears the grid and status below — only available once nothing is running." />
+                        <ProgressBar Grid.Column="3" Width="180" IsIndeterminate="{Binding IsBusy}"
                                      Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
                     </Grid>
                 </Grid>
