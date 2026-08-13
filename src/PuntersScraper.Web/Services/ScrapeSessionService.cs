@@ -15,6 +15,7 @@ public sealed class MeetingRow
     public required Discipline DisciplineEnum { get; init; }
     public required Meeting Meeting { get; init; }
     public required string Group { get; init; }
+    public required DateOnly Date { get; init; }
 
     public string Discipline => DisciplineEnum.Code();
     public string MeetingName => Meeting.Name ?? "";
@@ -56,7 +57,7 @@ public sealed class MeetingRow
 public sealed class ScrapeSessionService
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly Dictionary<Discipline, ScrapeResult> _lastResults = new();
+    private readonly Dictionary<(DateOnly Date, Discipline Discipline), ScrapeResult> _lastResults = new();
     private readonly Dictionary<string, RaceDetail> _raceDetails = new();
     private CancellationTokenSource? _cts;
 
@@ -82,12 +83,22 @@ public sealed class ScrapeSessionService
         _cts.Cancel();
     }
 
+    /// <param name="forceUploadToS3">Auto-scrape always passes true here — its whole point is
+    /// unattended delivery into the bucket for TroyenRaceIngestor, so it uploads regardless of
+    /// whether the manual Scraper page's "Also upload to S3" checkbox happens to be on.</param>
     public async Task ScrapeAsync(
-        IReadOnlyList<Discipline> disciplines, DateOnly date, string countryFilter, string courseFilter)
+        IReadOnlyList<Discipline> disciplines, IReadOnlyList<DateOnly> dates, string countryFilter, string courseFilter,
+        bool forceUploadToS3 = false)
     {
         if (disciplines.Count == 0)
         {
             SetStatus("Select at least one discipline (Horses / Greyhounds / Harness).");
+            return;
+        }
+
+        if (dates.Count == 0)
+        {
+            SetStatus("Select at least one date.");
             return;
         }
 
@@ -132,6 +143,7 @@ public sealed class ScrapeSessionService
             await using IPuntersScraperService service = new PuntersScraperService();
             await service.InitializeAsync(new ScraperOptions(), token);
 
+            foreach (var date in dates)
             foreach (var discipline in disciplines)
             {
                 token.ThrowIfCancellationRequested();
@@ -149,13 +161,13 @@ public sealed class ScrapeSessionService
                         .Where(g => g.Meetings.Count > 0)
                         .ToList();
 
-                    _lastResults[discipline] = result;
+                    _lastResults[(date, discipline)] = result;
 
                     foreach (var group in result.MeetingsGrouped)
                     {
                         foreach (var meeting in group.Meetings)
                         {
-                            var row = new MeetingRow { DisciplineEnum = discipline, Meeting = meeting, Group = group.Group ?? "" };
+                            var row = new MeetingRow { DisciplineEnum = discipline, Meeting = meeting, Group = group.Group ?? "", Date = date };
                             rows.Add(row);
                             Meetings.Add(row);
                         }
@@ -163,12 +175,12 @@ public sealed class ScrapeSessionService
 
                     if (rows.Count == 0 && (countryFilter.Length > 0 || courseFilter.Length > 0))
                     {
-                        progress.Report($"[P-{discipline.Code()}] No meetings matched the country/course filter.");
+                        progress.Report($"[P-{discipline.Code()}] {date:yyyy-MM-dd}: No meetings matched the country/course filter.");
                     }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    var message = $"[P-{discipline.Code()}] Failed: {ex.Message}";
+                    var message = $"[P-{discipline.Code()}] {date:yyyy-MM-dd}: Failed: {ex.Message}";
                     disciplineFailures.Add(message);
                     SetStatus(message);
                     continue;
@@ -201,7 +213,7 @@ public sealed class ScrapeSessionService
                         NotifyChanged();
                     }
 
-                    if (settings.UploadToS3)
+                    if (settings.UploadToS3 || forceUploadToS3)
                     {
                         var (uploaded, failed) = await UploadMeetingToS3Async(settings, discipline, row.Group, row.Meeting);
                         totalS3Uploaded += uploaded;
@@ -226,7 +238,7 @@ public sealed class ScrapeSessionService
 
             if (_lastResults.Count > 0)
             {
-                SetStatus($"Done. {Meetings.Count} meeting(s) loaded from {_lastResults.Count} discipline(s), " +
+                SetStatus($"Done. {Meetings.Count} meeting(s) loaded from {dates.Count} date(s) / {disciplines.Count} discipline(s), " +
                           $"{_raceDetails.Count} race(s) with full runner detail.");
             }
             else if (disciplineFailures.Count > 0)
@@ -244,9 +256,9 @@ public sealed class ScrapeSessionService
             // Each meeting was already uploaded to S3 / exported to a folder as soon as its
             // races finished scraping (see the calls in the race-detail loop above) — this just
             // reports the running totals from those per-meeting actions.
-            if (_lastResults.Count > 0 && (settings.UploadToS3 || settings.AutoExportAfterScrape))
+            if (_lastResults.Count > 0 && (settings.UploadToS3 || forceUploadToS3 || settings.AutoExportAfterScrape))
             {
-                if (settings.UploadToS3)
+                if (settings.UploadToS3 || forceUploadToS3)
                 {
                     StatusText += totalS3Failed > 0
                         ? $" Uploaded {totalS3Uploaded} file(s) to S3 ({totalS3Failed} failed — see above)."
@@ -279,12 +291,18 @@ public sealed class ScrapeSessionService
         }
     }
 
+    /// <summary>Splits a comma/whitespace-separated ISO2 list (e.g. "AU, NZ") into its codes.
+    /// Blank input yields an empty set, meaning "no filter — all countries".</summary>
+    private static string[] ParseCountryCodes(string countryFilter) =>
+        countryFilter.Split(new[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+
     private static bool MatchesFilters(Meeting meeting, string countryFilter, string courseFilter)
     {
-        if (countryFilter.Length > 0)
+        var countryCodes = ParseCountryCodes(countryFilter);
+        if (countryCodes.Length > 0)
         {
             var iso2 = meeting.Venue?.Country?.Iso2;
-            if (!string.Equals(iso2, countryFilter, StringComparison.OrdinalIgnoreCase))
+            if (iso2 is null || !countryCodes.Any(code => string.Equals(iso2, code, StringComparison.OrdinalIgnoreCase)))
                 return false;
         }
 
@@ -311,7 +329,7 @@ public sealed class ScrapeSessionService
 
         try
         {
-            foreach (var (discipline, result) in _lastResults)
+            foreach (var ((_, discipline), result) in _lastResults)
             {
                 foreach (var group in result.MeetingsGrouped)
                 {

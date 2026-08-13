@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Media;
 using System.Text.Json;
+using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using PuntersScraper.App.Services;
@@ -14,7 +15,7 @@ namespace PuntersScraper.App.ViewModels;
 
 public sealed partial class MainViewModel : ObservableObject
 {
-    private readonly Dictionary<Discipline, ScrapeResult> _lastResults = new();
+    private readonly Dictionary<(DateOnly Date, Discipline Discipline), ScrapeResult> _lastResults = new();
 
     /// <summary>Race detail keyed by raceId.</summary>
     private readonly Dictionary<string, RaceDetail> _raceDetails = new();
@@ -26,6 +27,16 @@ public sealed partial class MainViewModel : ObservableObject
     private CancellationTokenSource? _cts;
     private string? _pendingNoticeId;
 
+    /// <summary>Ticks on the UI thread (via WPF's Dispatcher) so its handler can safely touch
+    /// <see cref="Meetings"/> and other bound properties directly, the same as a button click —
+    /// a background <see cref="System.Threading.Timer"/> would require manual Dispatcher.Invoke
+    /// marshaling to avoid a cross-thread collection exception.</summary>
+    private readonly DispatcherTimer _autoScrapeTimer;
+
+    /// <summary>"{yyyy-MM-dd}T{HH:mm}" of the last slot that actually fired — guards against
+    /// firing twice for the same configured time if a tick happens to land on it more than once.</summary>
+    private string? _lastAutoScrapeSlotKey;
+
     public MainViewModel()
     {
         _loadingSettings = true;
@@ -33,10 +44,23 @@ public sealed partial class MainViewModel : ObservableObject
         AutoExportAfterScrape = _settings.AutoExportAfterScrape;
         UploadToS3 = _settings.UploadToS3;
         S3BucketName = _settings.S3BucketName;
+        AutoScrapeEnabled = _settings.AutoScrapeEnabled;
+        AutoScrapeTimesOfDay = _settings.AutoScrapeTimesOfDay;
+        AutoScrapeIncludeYesterday = _settings.AutoScrapeIncludeYesterday;
+        AutoScrapeIncludeToday = _settings.AutoScrapeIncludeToday;
+        AutoScrapeIncludeTomorrow = _settings.AutoScrapeIncludeTomorrow;
+        AutoScrapeHorses = _settings.AutoScrapeHorses;
+        AutoScrapeGreyhounds = _settings.AutoScrapeGreyhounds;
+        AutoScrapeHarness = _settings.AutoScrapeHarness;
+        AutoScrapeLastRunSummary = _settings.AutoScrapeLastRunSummary;
         _loadingSettings = false;
 
         _ = CheckForUpdatesAsync();
         _ = CheckForDeveloperNoticeAsync();
+
+        _autoScrapeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        _autoScrapeTimer.Tick += (_, _) => _ = AutoScrapeTickAsync();
+        _autoScrapeTimer.Start();
     }
 
     [ObservableProperty]
@@ -93,6 +117,38 @@ public sealed partial class MainViewModel : ObservableObject
     /// buckets. Remembered across app restarts.</summary>
     [ObservableProperty]
     private string s3BucketName = "";
+
+    /// <summary>When set, <see cref="AutoScrapeTickAsync"/> fires a scrape automatically at each
+    /// listed time in <see cref="AutoScrapeTimesOfDay"/>, for as long as this app stays open —
+    /// there is no scheduling once the app is closed.</summary>
+    [ObservableProperty]
+    private bool autoScrapeEnabled;
+
+    /// <summary>Comma-separated 24h "HH:mm" times, e.g. "06:00,18:00" — fires once per listed time
+    /// each day, so multiple daily runs are just multiple entries here.</summary>
+    [ObservableProperty]
+    private string autoScrapeTimesOfDay = "06:00,18:00";
+
+    [ObservableProperty]
+    private bool autoScrapeIncludeYesterday = true;
+
+    [ObservableProperty]
+    private bool autoScrapeIncludeToday = true;
+
+    [ObservableProperty]
+    private bool autoScrapeIncludeTomorrow = true;
+
+    [ObservableProperty]
+    private bool autoScrapeHorses = true;
+
+    [ObservableProperty]
+    private bool autoScrapeGreyhounds = true;
+
+    [ObservableProperty]
+    private bool autoScrapeHarness = true;
+
+    [ObservableProperty]
+    private string autoScrapeLastRunSummary = "";
 
     /// <summary>True once a newer release than the one currently running has been found on
     /// GitHub — drives the update banner's visibility in MainWindow.</summary>
@@ -181,6 +237,99 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (_loadingSettings) return;
         _settings.S3BucketName = value;
+        _settings.Save();
+    }
+
+    partial void OnAutoScrapeEnabledChanged(bool value)
+    {
+        if (_loadingSettings) return;
+        _settings.AutoScrapeEnabled = value;
+        _settings.Save();
+    }
+
+    partial void OnAutoScrapeTimesOfDayChanged(string value)
+    {
+        if (_loadingSettings) return;
+        _settings.AutoScrapeTimesOfDay = value;
+        _settings.Save();
+    }
+
+    partial void OnAutoScrapeIncludeYesterdayChanged(bool value)
+    {
+        if (_loadingSettings) return;
+        _settings.AutoScrapeIncludeYesterday = value;
+        _settings.Save();
+    }
+
+    partial void OnAutoScrapeIncludeTodayChanged(bool value)
+    {
+        if (_loadingSettings) return;
+        _settings.AutoScrapeIncludeToday = value;
+        _settings.Save();
+    }
+
+    partial void OnAutoScrapeIncludeTomorrowChanged(bool value)
+    {
+        if (_loadingSettings) return;
+        _settings.AutoScrapeIncludeTomorrow = value;
+        _settings.Save();
+    }
+
+    partial void OnAutoScrapeHorsesChanged(bool value)
+    {
+        if (_loadingSettings) return;
+        _settings.AutoScrapeHorses = value;
+        _settings.Save();
+    }
+
+    partial void OnAutoScrapeGreyhoundsChanged(bool value)
+    {
+        if (_loadingSettings) return;
+        _settings.AutoScrapeGreyhounds = value;
+        _settings.Save();
+    }
+
+    partial void OnAutoScrapeHarnessChanged(bool value)
+    {
+        if (_loadingSettings) return;
+        _settings.AutoScrapeHarness = value;
+        _settings.Save();
+    }
+
+    /// <summary>Ticks every 30s on the UI thread; fires <see cref="ScrapeDatesAsync"/> once per
+    /// configured time-of-day slot, for whichever days/disciplines are configured for auto-scrape
+    /// (independent of the manual panel's own selections above), across every country/course.</summary>
+    private async Task AutoScrapeTickAsync()
+    {
+        if (!AutoScrapeEnabled || IsBusy) return;
+
+        var now = DateTime.Now;
+        var currentSlot = now.ToString("HH:mm");
+        var configuredTimes = AutoScrapeTimesOfDay.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (!configuredTimes.Contains(currentSlot)) return;
+
+        var slotKey = $"{now:yyyy-MM-dd}T{currentSlot}";
+        if (slotKey == _lastAutoScrapeSlotKey) return;
+        _lastAutoScrapeSlotKey = slotKey;
+
+        var disciplines = new List<Discipline>();
+        if (AutoScrapeHorses) disciplines.Add(Discipline.Horses);
+        if (AutoScrapeGreyhounds) disciplines.Add(Discipline.Greyhounds);
+        if (AutoScrapeHarness) disciplines.Add(Discipline.Harness);
+        if (disciplines.Count == 0) return;
+
+        var today = DateOnly.FromDateTime(now);
+        var dates = new List<DateOnly>();
+        if (AutoScrapeIncludeYesterday) dates.Add(today.AddDays(-1));
+        if (AutoScrapeIncludeToday) dates.Add(today);
+        if (AutoScrapeIncludeTomorrow) dates.Add(today.AddDays(1));
+        if (dates.Count == 0) return;
+
+        await ScrapeDatesAsync(disciplines, dates, countryFilter: "", courseFilter: "", forceUploadToS3: true);
+
+        AutoScrapeLastRunSummary = StatusText;
+        _settings.AutoScrapeLastRunUtc = DateTime.UtcNow;
+        _settings.AutoScrapeLastRunSummary = StatusText;
         _settings.Save();
     }
 
@@ -285,9 +434,9 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Scrapes meetings for every selected discipline and always follows up by scraping full
-    /// runner/jockey/form detail for every race in every matching meeting — there is no
-    /// separate "meetings only" mode; one Scrape click always gets everything.
+    /// Scrapes meetings for every selected discipline on the selected date, and always follows up
+    /// by scraping full runner/jockey/form detail for every race in every matching meeting — there
+    /// is no separate "meetings only" mode; one Scrape click always gets everything.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanScrape))]
     private async Task ScrapeAsync()
@@ -303,9 +452,28 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
-        var countryFilter = CountryCodeFilter.Trim();
-        var courseFilter = CourseNameFilter.Trim();
+        await ScrapeDatesAsync(
+            disciplines,
+            new List<DateOnly> { DateOnly.FromDateTime(SelectedDate) },
+            CountryCodeFilter.Trim(),
+            CourseNameFilter.Trim());
+    }
 
+    /// <summary>
+    /// Shared scrape orchestration behind both the manual Scrape button (a single-element
+    /// <paramref name="dates"/> list built from <see cref="SelectedDate"/>) and the auto-scrape
+    /// timer (<see cref="AutoScrapeTick"/>, typically yesterday/today/tomorrow) — one browser
+    /// session covers every date/discipline combination in <paramref name="dates"/> x
+    /// <paramref name="disciplines"/>, with results from every date accumulating into the same
+    /// <see cref="Meetings"/> grid.
+    /// </summary>
+    /// <param name="forceUploadToS3">Auto-scrape always passes true here — its whole point is
+    /// unattended delivery into the bucket for TroyenRaceIngestor, so it uploads regardless of
+    /// whether the manual Scraper tab's "Also upload to S3" checkbox happens to be on.</param>
+    private async Task ScrapeDatesAsync(
+        List<Discipline> disciplines, List<DateOnly> dates, string countryFilter, string courseFilter,
+        bool forceUploadToS3 = false)
+    {
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
 
@@ -317,7 +485,6 @@ public sealed partial class MainViewModel : ObservableObject
         StatusText = "Starting browser...";
 
         IProgress<string> progress = new Progress<string>(msg => StatusText = msg);
-        var date = DateOnly.FromDateTime(SelectedDate);
         var disciplineFailures = new List<string>();
 
         // Running totals for auto-export, which now happens per-meeting (see the export call
@@ -332,6 +499,7 @@ public sealed partial class MainViewModel : ObservableObject
             await using IPuntersScraperService service = new PuntersScraperService();
             await service.InitializeAsync(new ScraperOptions { Headless = Headless }, token);
 
+            foreach (var date in dates)
             foreach (var discipline in disciplines)
             {
                 token.ThrowIfCancellationRequested();
@@ -353,13 +521,13 @@ public sealed partial class MainViewModel : ObservableObject
                         .Where(g => g.Meetings.Count > 0)
                         .ToList();
 
-                    _lastResults[discipline] = result;
+                    _lastResults[(date, discipline)] = result;
 
                     foreach (var group in result.MeetingsGrouped)
                     {
                         foreach (var meeting in group.Meetings)
                         {
-                            var row = MeetingRow.From(discipline, group.Group ?? "", meeting);
+                            var row = MeetingRow.From(discipline, group.Group ?? "", meeting, date);
                             rows.Add(row);
                             Meetings.Add(row);
                         }
@@ -367,12 +535,12 @@ public sealed partial class MainViewModel : ObservableObject
 
                     if (rows.Count == 0 && (countryFilter.Length > 0 || courseFilter.Length > 0))
                     {
-                        progress.Report($"[P-{discipline.Code()}] No meetings matched the country/course filter.");
+                        progress.Report($"[P-{discipline.Code()}] {date:yyyy-MM-dd}: No meetings matched the country/course filter.");
                     }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    var message = $"[P-{discipline.Code()}] Failed: {ex.Message}";
+                    var message = $"[P-{discipline.Code()}] {date:yyyy-MM-dd}: Failed: {ex.Message}";
                     disciplineFailures.Add(message);
                     StatusText = message;
                     continue;
@@ -407,30 +575,52 @@ public sealed partial class MainViewModel : ObservableObject
                         row.RacesProcessed++;
                     }
 
+                    // Uploaded to S3 independently of the local folder export below (same idea as
+                    // the Web version's ScrapeSessionService) — so S3 delivery doesn't depend on
+                    // a download folder being configured at all. forceUploadToS3 is what lets
+                    // auto-scrape always push to the bucket regardless of the manual "Also upload
+                    // to S3" checkbox's current state.
+                    if (UploadToS3 || forceUploadToS3)
+                    {
+                        var (uploaded, failed) = await UploadMeetingToS3Async(discipline, row.Group, row.Meeting);
+                        totalS3UploadedCount += uploaded;
+                        totalS3FailedCount += failed;
+                        progress.Report(
+                            $"[P-{discipline.Code()}] Uploaded {row.MeetingName} to S3: {uploaded} file(s)." +
+                            (failed > 0 ? $" {failed} failed." : ""));
+                    }
+
                     // Export this meeting right away instead of waiting for every other
                     // meeting/discipline in this run to finish scraping too — so a long
-                    // multi-meeting scrape has already saved (and, if enabled, uploaded) each
-                    // meeting as soon as it's ready, rather than losing everything scraped so
-                    // far if the run is interrupted or fails partway through.
+                    // multi-meeting scrape has already saved each meeting as soon as it's ready,
+                    // rather than losing everything scraped so far if the run is interrupted or
+                    // fails partway through. S3 upload is handled above, not here — passing
+                    // uploadToS3: false avoids uploading the same file twice.
                     if (AutoExportAfterScrape && !string.IsNullOrWhiteSpace(DownloadFolder))
                     {
-                        var exportResult = await ExportMeetingAsync(discipline, row.Group, row.Meeting, DownloadFolder);
+                        var exportResult = await ExportMeetingAsync(discipline, row.Group, row.Meeting, DownloadFolder, uploadToS3: false);
                         totalFileCount += exportResult.FileCount;
                         totalMeetingFolderCount += exportResult.MeetingFolderCount;
-                        totalS3UploadedCount += exportResult.S3UploadedCount;
-                        totalS3FailedCount += exportResult.S3FailedCount;
-                        progress.Report(
-                            $"[P-{discipline.Code()}] Exported {row.MeetingName}: {exportResult.FileCount} file(s)." +
-                            FormatS3Suffix(exportResult));
+                        progress.Report($"[P-{discipline.Code()}] Exported {row.MeetingName}: {exportResult.FileCount} file(s).");
                     }
                 }
             }
 
             if (_lastResults.Count > 0)
             {
-                StatusText = $"Done. {Meetings.Count} meeting(s) loaded from {_lastResults.Count} discipline(s), " +
+                StatusText = $"Done. {Meetings.Count} meeting(s) loaded from {dates.Count} date(s) / {disciplines.Count} discipline(s), " +
                              $"{_raceDetails.Count} race(s) with full runner detail.";
                 SystemSounds.Asterisk.Play();
+
+                // Each meeting was already uploaded to S3 (if applicable) as soon as its races
+                // finished scraping (see the upload call in the race-detail loop above) — this
+                // just reports the running totals from those per-meeting uploads.
+                if (UploadToS3 || forceUploadToS3)
+                {
+                    StatusText += totalS3FailedCount > 0
+                        ? $" Uploaded {totalS3UploadedCount} file(s) to S3 ({totalS3FailedCount} failed — see above)."
+                        : $" Uploaded {totalS3UploadedCount} file(s) to S3.";
+                }
 
                 if (AutoExportAfterScrape)
                 {
@@ -440,11 +630,7 @@ public sealed partial class MainViewModel : ObservableObject
                     }
                     else
                     {
-                        // Each meeting was already exported as soon as its races finished
-                        // scraping (see the export call in the race-detail loop above) — this
-                        // just reports the running totals from those per-meeting exports.
-                        StatusText += $" Auto-exported {totalFileCount} file(s) across {totalMeetingFolderCount} meeting folder(s) to {DownloadFolder} as each meeting finished." +
-                                      FormatS3Suffix(new ExportResult(totalFileCount, totalMeetingFolderCount, totalS3UploadedCount, totalS3FailedCount));
+                        StatusText += $" Auto-exported {totalFileCount} file(s) across {totalMeetingFolderCount} meeting folder(s) to {DownloadFolder} as each meeting finished.";
                     }
                 }
             }
@@ -478,12 +664,18 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>Splits a comma/whitespace-separated ISO2 list (e.g. "AU, NZ") into its codes.
+    /// Blank input yields an empty set, meaning "no filter — all countries".</summary>
+    private static string[] ParseCountryCodes(string countryFilter) =>
+        countryFilter.Split(new[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+
     private static bool MatchesFilters(Meeting meeting, string countryFilter, string courseFilter)
     {
-        if (countryFilter.Length > 0)
+        var countryCodes = ParseCountryCodes(countryFilter);
+        if (countryCodes.Length > 0)
         {
             var iso2 = meeting.Venue?.Country?.Iso2;
-            if (!string.Equals(iso2, countryFilter, StringComparison.OrdinalIgnoreCase))
+            if (iso2 is null || !countryCodes.Any(code => string.Equals(iso2, code, StringComparison.OrdinalIgnoreCase)))
                 return false;
         }
 
@@ -546,13 +738,13 @@ public sealed partial class MainViewModel : ObservableObject
         var s3UploadedCount = 0;
         var s3FailedCount = 0;
 
-        foreach (var (discipline, result) in _lastResults)
+        foreach (var ((_, discipline), result) in _lastResults)
         {
             foreach (var group in result.MeetingsGrouped)
             {
                 foreach (var meeting in group.Meetings)
                 {
-                    var meetingResult = await ExportMeetingAsync(discipline, group.Group ?? "", meeting, targetFolder);
+                    var meetingResult = await ExportMeetingAsync(discipline, group.Group ?? "", meeting, targetFolder, uploadToS3: UploadToS3);
                     fileCount += meetingResult.FileCount;
                     meetingFolderCount += meetingResult.MeetingFolderCount;
                     s3UploadedCount += meetingResult.S3UploadedCount;
@@ -572,7 +764,12 @@ public sealed partial class MainViewModel : ObservableObject
     /// <see cref="ScrapeAsync"/> as soon as each meeting's races finish, rather than waiting for
     /// the whole scrape to complete).
     /// </summary>
-    private async Task<ExportResult> ExportMeetingAsync(Discipline discipline, string group, Meeting meeting, string targetFolder)
+    /// <param name="uploadToS3">Whether this call should also upload to S3. Kept as an explicit
+    /// parameter rather than always reading the <see cref="UploadToS3"/> checkbox directly — the
+    /// per-meeting export during a live scrape passes false, since S3 upload there is handled
+    /// independently (see <see cref="UploadMeetingToS3Async"/>) to avoid uploading the same file
+    /// twice; only the manual "Export JSON..." button passes the checkbox's live value.</param>
+    private async Task<ExportResult> ExportMeetingAsync(Discipline discipline, string group, Meeting meeting, string targetFolder, bool uploadToS3)
     {
         var fileCount = 0;
         var s3UploadedCount = 0;
@@ -594,9 +791,9 @@ public sealed partial class MainViewModel : ObservableObject
             }
         };
 
-        if (await WriteAndMaybeUploadAsync(meetingFolder, meetingFolderName, MeetingFileName(discipline), meetingPayload))
+        if (await WriteAndMaybeUploadAsync(meetingFolder, meetingFolderName, MeetingFileName(discipline), meetingPayload, uploadToS3))
             s3UploadedCount++;
-        else if (UploadToS3)
+        else if (uploadToS3)
             s3FailedCount++;
         fileCount++;
 
@@ -605,9 +802,9 @@ public sealed partial class MainViewModel : ObservableObject
             if (raceEvent.Id is null || !_raceDetails.TryGetValue(raceEvent.Id, out var detail))
                 continue;
 
-            if (await WriteAndMaybeUploadAsync(meetingFolder, meetingFolderName, DataDumpFileName(detail.RaceNumber), detail))
+            if (await WriteAndMaybeUploadAsync(meetingFolder, meetingFolderName, DataDumpFileName(detail.RaceNumber), detail, uploadToS3))
                 s3UploadedCount++;
-            else if (UploadToS3)
+            else if (uploadToS3)
                 s3FailedCount++;
             fileCount++;
         }
@@ -616,17 +813,17 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     /// <summary>Writes one file locally (nested under its meeting folder, as always), and if
-    /// S3 upload is enabled, also uploads the same content directly into the S3 bucket's
-    /// configured folder — flat, with the meeting slug folded into the filename instead of a
-    /// per-meeting prefix, purely so files from different meetings can't collide once there's
+    /// <paramref name="uploadToS3"/> is set, also uploads the same content directly into the S3
+    /// bucket's configured folder — flat, with the meeting slug folded into the filename instead
+    /// of a per-meeting prefix, purely so files from different meetings can't collide once there's
     /// no folder nesting to keep them apart.</summary>
     /// <returns>true if an S3 upload was attempted and succeeded.</returns>
-    private async Task<bool> WriteAndMaybeUploadAsync(string localFolder, string meetingFolderName, string fileName, object payload)
+    private async Task<bool> WriteAndMaybeUploadAsync(string localFolder, string meetingFolderName, string fileName, object payload, bool uploadToS3)
     {
         var json = JsonSerializer.Serialize(payload, ScraperJsonOptions.Write);
         File.WriteAllText(Path.Combine(localFolder, fileName), json);
 
-        if (!UploadToS3) return false;
+        if (!uploadToS3) return false;
 
         try
         {
@@ -637,6 +834,57 @@ public sealed partial class MainViewModel : ObservableObject
         {
             StatusText = $"S3 upload failed for {fileName}: {ex.Message}";
             return false;
+        }
+    }
+
+    /// <summary>Uploads a single meeting straight to S3 (no local temp folder involved) — called
+    /// directly from <see cref="ScrapeDatesAsync"/> as soon as each meeting's races finish,
+    /// independent of local folder export, mirroring the Web version's
+    /// ScrapeSessionService.UploadMeetingToS3Async.</summary>
+    private async Task<(int uploaded, int failed)> UploadMeetingToS3Async(Discipline discipline, string group, Meeting meeting)
+    {
+        var meetingFolderName = Slugify(meeting.Slug ?? meeting.Name ?? meeting.Id ?? "meeting");
+        var uploaded = 0;
+        var failed = 0;
+
+        var meetingPayload = new
+        {
+            data = new
+            {
+                meetingsGrouped = new[]
+                {
+                    new { group, meetings = new[] { BuildMeetingExport(meeting) } }
+                }
+            }
+        };
+
+        var (u, f) = await UploadJsonToS3Async(meetingFolderName, MeetingFileName(discipline), meetingPayload);
+        uploaded += u; failed += f;
+
+        foreach (var raceEvent in meeting.Events)
+        {
+            if (raceEvent.Id is null || !_raceDetails.TryGetValue(raceEvent.Id, out var detail))
+                continue;
+
+            (u, f) = await UploadJsonToS3Async(meetingFolderName, DataDumpFileName(detail.RaceNumber), detail);
+            uploaded += u; failed += f;
+        }
+
+        return (uploaded, failed);
+    }
+
+    private async Task<(int uploaded, int failed)> UploadJsonToS3Async(string meetingFolderName, string fileName, object payload)
+    {
+        var json = JsonSerializer.Serialize(payload, ScraperJsonOptions.Write);
+        try
+        {
+            await S3JsonUploader.UploadAsync(_settings, $"{meetingFolderName}-{fileName}", json);
+            return (1, 0);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"S3 upload failed for {fileName}: {ex.Message}";
+            return (0, 1);
         }
     }
 

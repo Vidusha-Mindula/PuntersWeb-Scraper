@@ -28,6 +28,23 @@ public sealed class AppSettings
     /// earlier one was already read.</summary>
     public string LastSeenNoticeId { get; set; } = "";
 
+    // --- Auto Scrape (see MainViewModel's DispatcherTimer) — only fires while this app is open.
+    // On by default; the "Enabled" checkbox on the Auto Scraper tab is how a user turns it off. ---
+    public bool AutoScrapeEnabled { get; set; } = true;
+
+    /// <summary>Comma-separated 24h "HH:mm" times, e.g. "06:00,18:00" — fires once per listed time
+    /// each day, so multiple daily runs are just multiple entries here.</summary>
+    public string AutoScrapeTimesOfDay { get; set; } = "06:00,18:00";
+    public bool AutoScrapeIncludeYesterday { get; set; } = true;
+    public bool AutoScrapeIncludeToday { get; set; } = true;
+    public bool AutoScrapeIncludeTomorrow { get; set; } = true;
+    public bool AutoScrapeHorses { get; set; } = true;
+    public bool AutoScrapeGreyhounds { get; set; } = true;
+    public bool AutoScrapeHarness { get; set; } = true;
+
+    public DateTime? AutoScrapeLastRunUtc { get; set; }
+    public string AutoScrapeLastRunSummary { get; set; } = "";
+
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "PuntersScraper", "settings.json");

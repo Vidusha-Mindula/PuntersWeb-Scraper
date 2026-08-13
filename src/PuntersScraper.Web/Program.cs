@@ -24,6 +24,7 @@ builder.Services.AddSingleton<ScrapeSessionService>();
 builder.Services.AddSingleton<DeveloperNoticeService>();
 builder.Services.AddSingleton<UpdateAvailabilityService>();
 builder.Services.AddHostedService<PeriodicChecksHostedService>();
+builder.Services.AddHostedService<AutoScrapeHostedService>();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>

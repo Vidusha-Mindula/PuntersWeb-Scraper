@@ -94,7 +94,7 @@
     <table>
         <thead>
             <tr>
-                <th>Discipline</th><th>Group</th><th>Meeting</th><th>State</th><th>Country</th>
+                <th>Date</th><th>Discipline</th><th>Group</th><th>Meeting</th><th>State</th><th>Country</th>
                 <th>Races</th><th>Detail</th><th>First Race</th><th>Track</th><th>Stage</th><th style="width:130px;">Progress</th>
             </tr>
         </thead>
@@ -102,6 +102,7 @@
             @foreach (var row in Session.Meetings.ToList())
             {
                 <tr>
+                    <td>@row.Date.ToString("yyyy-MM-dd")</td>
                     <td>@row.Discipline</td>
                     <td>@row.Group</td>
                     <td>@row.MeetingName</td>
@@ -156,7 +157,7 @@
         if (ScrapeGreyhounds) disciplines.Add(PuntersScraper.Shared.Models.Discipline.Greyhounds);
         if (ScrapeHarness) disciplines.Add(PuntersScraper.Shared.Models.Discipline.Harness);
 
-        await Session.ScrapeAsync(disciplines, SelectedDate, CountryCodeFilter.Trim(), CourseNameFilter.Trim());
+        await Session.ScrapeAsync(disciplines, new[] { SelectedDate }, CountryCodeFilter.Trim(), CourseNameFilter.Trim());
     }
 
     private void OnUploadToS3Changed(ChangeEventArgs e)
