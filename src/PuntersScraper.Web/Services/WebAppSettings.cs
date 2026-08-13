@@ -54,18 +54,32 @@ public sealed class WebAppSettings
 
     private static string FilePath => Path.Combine(AppContext.BaseDirectory, "App_Data", "settings.json");
 
+    private static WebAppSettings? _cached;
+
+    /// <summary>Returns the one shared settings instance for this server process, loading it from
+    /// disk only the first time. Home.razor/AutoScrape.razor/Bucket.razor each used to call this
+    /// independently and hold their own private copy for the component's lifetime — since this is
+    /// deployment-wide config (see class doc comment), that meant whichever page's Save() ran last
+    /// could silently wipe out a field changed on a different page (e.g. typing S3 keys on the
+    /// Bucket page, then toggling something on the Auto Scraper page, reverted the keys back to
+    /// blank). Caching one shared instance means every page reads and writes the exact same
+    /// object, so no save can ever clobber a field it doesn't know about.</summary>
     public static WebAppSettings Load()
     {
+        if (_cached is not null) return _cached;
+
         try
         {
-            return File.Exists(FilePath)
+            _cached = File.Exists(FilePath)
                 ? JsonSerializer.Deserialize<WebAppSettings>(File.ReadAllText(FilePath)) ?? new WebAppSettings()
                 : new WebAppSettings();
         }
         catch
         {
-            return new WebAppSettings();
+            _cached = new WebAppSettings();
         }
+
+        return _cached;
     }
 
     public void Save()

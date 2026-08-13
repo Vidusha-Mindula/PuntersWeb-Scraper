@@ -49,19 +49,33 @@ public sealed class AppSettings
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "PuntersScraper", "settings.json");
 
+    private static AppSettings? _cached;
+
+    /// <summary>Returns the one shared settings instance for this process, loading it from disk
+    /// only the first time. MainViewModel and BucketViewModel each used to call this independently
+    /// and hold their own private copy — since nothing else writes this file while the app is
+    /// running (single-user desktop app), that just meant whichever one called Save() last
+    /// silently wiped out the other's in-memory changes (e.g. typing S3 keys on the Bucket tab,
+    /// then toggling anything on the Scraper tab, reverted the keys back to blank). Caching one
+    /// shared instance means every viewmodel reads and writes the exact same object, so no save
+    /// can ever clobber a field it doesn't know about.</summary>
     public static AppSettings Load()
     {
+        if (_cached is not null) return _cached;
+
         try
         {
-            return File.Exists(FilePath)
+            _cached = File.Exists(FilePath)
                 ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath)) ?? new AppSettings()
                 : new AppSettings();
         }
         catch
         {
             // Corrupt or unreadable settings file — fall back to defaults rather than crash the app.
-            return new AppSettings();
+            _cached = new AppSettings();
         }
+
+        return _cached;
     }
 
     public void Save()
