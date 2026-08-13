@@ -1,5 +1,5 @@
 ﻿{
-    "id": "20260810120641",
-    "title": "S3 Bucket Fix (v3.9.0)",
-    "message": "Fixed an issue where some computers couldn't access the S3 bucket. Update to v3.9.0 and your settings will reset to the correct bucket automatically - no action needed."
+    "id":  "20260813165024",
+    "title":  "Auto Scrape is here",
+    "message":  "You can now schedule the scraper to run automatically - covering yesterday, today, and tomorrow, across every discipline and country - instead of clicking Scrape by hand. Update to the latest version and check out the new Auto Scraper tab to set it up."
 }
