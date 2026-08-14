@@ -77,9 +77,9 @@ public sealed class AutoScrapeHostedService(
 
         var today = DateOnly.FromDateTime(now);
         var dates = new List<DateOnly>();
-        if (settings.AutoScrapeIncludeYesterday) dates.Add(today.AddDays(-1));
         if (settings.AutoScrapeIncludeToday) dates.Add(today);
         if (settings.AutoScrapeIncludeTomorrow) dates.Add(today.AddDays(1));
+        if (settings.AutoScrapeIncludeDayAfterTomorrow) dates.Add(today.AddDays(2));
         if (dates.Count == 0)
         {
             logger.LogWarning("Auto-scrape at {Slot} skipped — no dates selected", slotKey);

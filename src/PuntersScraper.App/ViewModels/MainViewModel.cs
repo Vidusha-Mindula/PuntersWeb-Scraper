@@ -46,9 +46,9 @@ public sealed partial class MainViewModel : ObservableObject
         S3BucketName = _settings.S3BucketName;
         AutoScrapeEnabled = _settings.AutoScrapeEnabled;
         AutoScrapeTimesOfDay = _settings.AutoScrapeTimesOfDay;
-        AutoScrapeIncludeYesterday = _settings.AutoScrapeIncludeYesterday;
         AutoScrapeIncludeToday = _settings.AutoScrapeIncludeToday;
         AutoScrapeIncludeTomorrow = _settings.AutoScrapeIncludeTomorrow;
+        AutoScrapeIncludeDayAfterTomorrow = _settings.AutoScrapeIncludeDayAfterTomorrow;
         AutoScrapeHorses = _settings.AutoScrapeHorses;
         AutoScrapeGreyhounds = _settings.AutoScrapeGreyhounds;
         AutoScrapeHarness = _settings.AutoScrapeHarness;
@@ -130,13 +130,13 @@ public sealed partial class MainViewModel : ObservableObject
     private string autoScrapeTimesOfDay = "06:00,18:00";
 
     [ObservableProperty]
-    private bool autoScrapeIncludeYesterday = true;
-
-    [ObservableProperty]
     private bool autoScrapeIncludeToday = true;
 
     [ObservableProperty]
     private bool autoScrapeIncludeTomorrow = true;
+
+    [ObservableProperty]
+    private bool autoScrapeIncludeDayAfterTomorrow = true;
 
     [ObservableProperty]
     private bool autoScrapeHorses = true;
@@ -270,13 +270,6 @@ public sealed partial class MainViewModel : ObservableObject
         _settings.Save();
     }
 
-    partial void OnAutoScrapeIncludeYesterdayChanged(bool value)
-    {
-        if (_loadingSettings) return;
-        _settings.AutoScrapeIncludeYesterday = value;
-        _settings.Save();
-    }
-
     partial void OnAutoScrapeIncludeTodayChanged(bool value)
     {
         if (_loadingSettings) return;
@@ -288,6 +281,13 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (_loadingSettings) return;
         _settings.AutoScrapeIncludeTomorrow = value;
+        _settings.Save();
+    }
+
+    partial void OnAutoScrapeIncludeDayAfterTomorrowChanged(bool value)
+    {
+        if (_loadingSettings) return;
+        _settings.AutoScrapeIncludeDayAfterTomorrow = value;
         _settings.Save();
     }
 
@@ -336,9 +336,9 @@ public sealed partial class MainViewModel : ObservableObject
 
         var today = DateOnly.FromDateTime(now);
         var dates = new List<DateOnly>();
-        if (AutoScrapeIncludeYesterday) dates.Add(today.AddDays(-1));
         if (AutoScrapeIncludeToday) dates.Add(today);
         if (AutoScrapeIncludeTomorrow) dates.Add(today.AddDays(1));
+        if (AutoScrapeIncludeDayAfterTomorrow) dates.Add(today.AddDays(2));
         if (dates.Count == 0) return;
 
         await ScrapeDatesAsync(disciplines, dates, countryFilter: "", courseFilter: "", forceUploadToS3: true);

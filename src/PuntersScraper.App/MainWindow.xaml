@@ -224,10 +224,10 @@
                         <StackPanel>
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,14" VerticalAlignment="Center">
                                 <CheckBox Content="Enabled" IsChecked="{Binding AutoScrapeEnabled}" Margin="0,0,24,0" VerticalAlignment="Center"
-                                          ToolTip="While checked, scrapes automatically at each time below, for as long as this app stays open." />
-                                <CheckBox Content="Yesterday" IsChecked="{Binding AutoScrapeIncludeYesterday}" Margin="0,0,18,0" VerticalAlignment="Center" />
+                                          ToolTip="While checked, scrapes automatically at each time below, for as long as this app stays open. If this app is installed on more than one PC, only enable this on one of them — otherwise every PC will scrape and upload at the same scheduled times." />
                                 <CheckBox Content="Today" IsChecked="{Binding AutoScrapeIncludeToday}" Margin="0,0,18,0" VerticalAlignment="Center" />
-                                <CheckBox Content="Tomorrow" IsChecked="{Binding AutoScrapeIncludeTomorrow}" VerticalAlignment="Center" />
+                                <CheckBox Content="Tomorrow" IsChecked="{Binding AutoScrapeIncludeTomorrow}" Margin="0,0,18,0" VerticalAlignment="Center" />
+                                <CheckBox Content="Day after tomorrow" IsChecked="{Binding AutoScrapeIncludeDayAfterTomorrow}" VerticalAlignment="Center" />
                             </StackPanel>
 
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,4" VerticalAlignment="Center">

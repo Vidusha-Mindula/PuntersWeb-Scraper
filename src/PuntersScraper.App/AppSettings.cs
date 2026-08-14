@@ -29,15 +29,17 @@ public sealed class AppSettings
     public string LastSeenNoticeId { get; set; } = "";
 
     // --- Auto Scrape (see MainViewModel's DispatcherTimer) — only fires while this app is open.
-    // On by default; the "Enabled" checkbox on the Auto Scraper tab is how a user turns it off. ---
-    public bool AutoScrapeEnabled { get; set; } = true;
+    // Off by default (opt-in) — if this app is installed on more than one PC, having it on by
+    // default everywhere means every PC scrapes/uploads at the same scheduled times, causing
+    // duplicate work. Turn it on deliberately on only one machine via the "Enabled" checkbox. ---
+    public bool AutoScrapeEnabled { get; set; }
 
     /// <summary>Comma-separated 24h "HH:mm" times, e.g. "06:00,18:00" — fires once per listed time
     /// each day, so multiple daily runs are just multiple entries here.</summary>
     public string AutoScrapeTimesOfDay { get; set; } = "06:00,18:00";
-    public bool AutoScrapeIncludeYesterday { get; set; } = true;
     public bool AutoScrapeIncludeToday { get; set; } = true;
     public bool AutoScrapeIncludeTomorrow { get; set; } = true;
+    public bool AutoScrapeIncludeDayAfterTomorrow { get; set; } = true;
     public bool AutoScrapeHorses { get; set; } = true;
     public bool AutoScrapeGreyhounds { get; set; } = true;
     public bool AutoScrapeHarness { get; set; } = true;

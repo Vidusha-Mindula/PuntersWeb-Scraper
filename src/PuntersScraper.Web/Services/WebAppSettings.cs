@@ -35,16 +35,17 @@ public sealed class WebAppSettings
     /// unlike the App, where it's per-machine.</summary>
     public string LastSeenNoticeId { get; set; } = "";
 
-    // --- Auto Scrape (see AutoScrapeHostedService) — on by default; the "Enabled" checkbox on
-    // the Auto Scraper page is how an admin turns it off. ---
-    public bool AutoScrapeEnabled { get; set; } = true;
+    // --- Auto Scrape (see AutoScrapeHostedService) — off by default (opt-in). This deployment is
+    // a single shared server, so this matters less than for the desktop App (which can be
+    // installed on many PCs), but keeping the default consistent across both. ---
+    public bool AutoScrapeEnabled { get; set; }
 
     /// <summary>Comma-separated 24h "HH:mm" times, e.g. "06:00,18:00" — AutoScrapeHostedService
     /// fires once per listed time each day, so multiple daily runs are just multiple entries here.</summary>
     public string AutoScrapeTimesOfDay { get; set; } = "06:00,18:00";
-    public bool AutoScrapeIncludeYesterday { get; set; } = true;
     public bool AutoScrapeIncludeToday { get; set; } = true;
     public bool AutoScrapeIncludeTomorrow { get; set; } = true;
+    public bool AutoScrapeIncludeDayAfterTomorrow { get; set; } = true;
     public bool AutoScrapeHorses { get; set; } = true;
     public bool AutoScrapeGreyhounds { get; set; } = true;
     public bool AutoScrapeHarness { get; set; } = true;

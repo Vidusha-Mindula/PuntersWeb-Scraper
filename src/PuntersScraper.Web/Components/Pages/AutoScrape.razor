@@ -13,15 +13,19 @@
             <input type="checkbox" checked="@Settings.AutoScrapeEnabled" @onchange="OnAutoScrapeEnabledChanged" /> Enabled
         </label>
         <label style="flex-direction:row; align-items:center; gap:6px;">
-            <input type="checkbox" checked="@Settings.AutoScrapeIncludeYesterday" @onchange="OnAutoScrapeIncludeYesterdayChanged" /> Yesterday
-        </label>
-        <label style="flex-direction:row; align-items:center; gap:6px;">
             <input type="checkbox" checked="@Settings.AutoScrapeIncludeToday" @onchange="OnAutoScrapeIncludeTodayChanged" /> Today
         </label>
         <label style="flex-direction:row; align-items:center; gap:6px;">
             <input type="checkbox" checked="@Settings.AutoScrapeIncludeTomorrow" @onchange="OnAutoScrapeIncludeTomorrowChanged" /> Tomorrow
         </label>
+        <label style="flex-direction:row; align-items:center; gap:6px;">
+            <input type="checkbox" checked="@Settings.AutoScrapeIncludeDayAfterTomorrow" @onchange="OnAutoScrapeIncludeDayAfterTomorrowChanged" /> Day after tomorrow
+        </label>
     </div>
+    <p style="font-size:11.5px;color:var(--subtle);margin-top:-8px;margin-bottom:14px;">
+        If this app runs on more than one server/PC, only enable this on one of them — otherwise every
+        instance will scrape and upload at the same scheduled times.
+    </p>
 
     <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px;">
         <label style="flex-direction:row; align-items:center; gap:6px;">
@@ -131,12 +135,6 @@
         Settings.Save();
     }
 
-    private void OnAutoScrapeIncludeYesterdayChanged(ChangeEventArgs e)
-    {
-        Settings.AutoScrapeIncludeYesterday = e.Value is bool b && b;
-        Settings.Save();
-    }
-
     private void OnAutoScrapeIncludeTodayChanged(ChangeEventArgs e)
     {
         Settings.AutoScrapeIncludeToday = e.Value is bool b && b;
@@ -146,6 +144,12 @@
     private void OnAutoScrapeIncludeTomorrowChanged(ChangeEventArgs e)
     {
         Settings.AutoScrapeIncludeTomorrow = e.Value is bool b && b;
+        Settings.Save();
+    }
+
+    private void OnAutoScrapeIncludeDayAfterTomorrowChanged(ChangeEventArgs e)
+    {
+        Settings.AutoScrapeIncludeDayAfterTomorrow = e.Value is bool b && b;
         Settings.Save();
     }
 
