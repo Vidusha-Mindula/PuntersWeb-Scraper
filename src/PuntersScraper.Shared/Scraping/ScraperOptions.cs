@@ -3,6 +3,13 @@ namespace PuntersScraper.Shared.Scraping;
 public sealed class ScraperOptions
 {
     /// <summary>
+    /// Which browser engine to drive. Defaults to Chrome (Playwright's bundled Chromium) — the
+    /// only one this scraper's bot-detection workarounds have actually been tested against. See
+    /// <see cref="ScraperBrowserChoice"/> for the tradeoffs of Firefox/Edge.
+    /// </summary>
+    public ScraperBrowserChoice Browser { get; set; } = ScraperBrowserChoice.Chrome;
+
+    /// <summary>
     /// Run Chromium headless. Defaults to false: headless Chromium was observed getting
     /// hard-blocked (HTTP 403) on the very first page load by bot-detection, while a headed
     /// (visible) browser passed every time in testing. Try true first if you'd rather not see

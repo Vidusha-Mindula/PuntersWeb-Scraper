@@ -57,30 +57,61 @@ public sealed class PuntersScraperService : IPuntersScraperService
     {
         options ??= new ScraperOptions();
 
-        var args = new List<string> { "--disable-blink-features=AutomationControlled" };
-        if (!options.Headless && options.HideWindow)
-        {
-            args.Add("--window-position=-32000,-32000");
-
-            // Chromium treats a window positioned off-screen as occluded/not-visible and applies
-            // the same throttling it uses for background tabs (reduced timers, skipped
-            // rendering) - confirmed by testing: the full-form scroll-triggered lazy load
-            // (ScrapeFullFormsAsync's getFullFormsBySelectionIds request) never fired at all with
-            // the window off-screen, but worked immediately in a normal visible window. These
-            // flags disable that throttling specifically for occluded/backgrounded windows/timers
-            // without changing anything JS-visible on the page, so they shouldn't affect
-            // bot-detection.
-            args.Add("--disable-backgrounding-occluded-windows");
-            args.Add("--disable-renderer-backgrounding");
-            args.Add("--disable-background-timer-throttling");
-        }
-
         _playwright = await Playwright.CreateAsync();
-        _browser = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+
+        // Chrome and Edge are both Chromium under the hood, so the same bot-detection args and
+        // off-screen-window trick apply to both — only the Channel differs (Edge points
+        // Playwright at the system-installed Edge rather than the bundled Chromium build).
+        // Firefox is a different engine entirely: none of these Chromium-only args are
+        // meaningful there, so it launches plain (see ScraperBrowserChoice's doc comment for why
+        // that also means it's less proven against Punters' bot-detection).
+        if (options.Browser == ScraperBrowserChoice.Firefox)
         {
-            Headless = options.Headless,
-            Args = args
-        });
+            // Firefox has no equivalent of Chromium's "--window-position" launch argument, so
+            // "hidden but not headless" (see HideWindow's doc comment on ScraperOptions) has to
+            // happen after the fact instead of via a launch flag — see OffScreenWindowMover.
+            var launchedAt = DateTime.UtcNow;
+            _browser = await _playwright.Firefox.LaunchAsync(new BrowserTypeLaunchOptions
+            {
+                Headless = options.Headless
+            });
+
+            if (!options.Headless && options.HideWindow)
+            {
+                // 20s upper bound to allow for first-run Firefox profile creation, which is much
+                // slower than a normal launch — TryMoveOffScreenAsync returns well before that in
+                // the common case, shortly after it confirms a window was actually moved.
+                await OffScreenWindowMover.TryMoveOffScreenAsync(
+                    "firefox", launchedAt, TimeSpan.FromSeconds(20), cancellationToken);
+            }
+        }
+        else
+        {
+            var args = new List<string> { "--disable-blink-features=AutomationControlled" };
+            if (!options.Headless && options.HideWindow)
+            {
+                args.Add("--window-position=-32000,-32000");
+
+                // Chromium treats a window positioned off-screen as occluded/not-visible and applies
+                // the same throttling it uses for background tabs (reduced timers, skipped
+                // rendering) - confirmed by testing: the full-form scroll-triggered lazy load
+                // (ScrapeFullFormsAsync's getFullFormsBySelectionIds request) never fired at all with
+                // the window off-screen, but worked immediately in a normal visible window. These
+                // flags disable that throttling specifically for occluded/backgrounded windows/timers
+                // without changing anything JS-visible on the page, so they shouldn't affect
+                // bot-detection.
+                args.Add("--disable-backgrounding-occluded-windows");
+                args.Add("--disable-renderer-backgrounding");
+                args.Add("--disable-background-timer-throttling");
+            }
+
+            _browser = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+            {
+                Headless = options.Headless,
+                Args = args,
+                Channel = options.Browser == ScraperBrowserChoice.Edge ? "msedge" : null
+            });
+        }
 
         _context = await _browser.NewContextAsync(new BrowserNewContextOptions
         {

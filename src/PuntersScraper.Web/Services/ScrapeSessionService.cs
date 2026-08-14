@@ -115,6 +115,13 @@ public sealed class ScrapeSessionService
             return;
         }
 
+        var browser = WebAppSettings.Load().ScraperBrowser;
+        if (!ScraperBrowserAvailability.IsInstalled(browser))
+        {
+            SetStatus($"{browser} isn't available on this server. {ScraperBrowserAvailability.InstallHint(browser)}");
+            return;
+        }
+
         if (!await _gate.WaitAsync(0))
         {
             SetStatus("A scrape is already running (started by another user) — try again shortly.");
@@ -154,7 +161,7 @@ public sealed class ScrapeSessionService
             // session, or an Xvfb virtual display on Linux); a truly headless container will
             // fail to launch the browser at all.
             await using IPuntersScraperService service = new PuntersScraperService();
-            await service.InitializeAsync(new ScraperOptions(), token);
+            await service.InitializeAsync(new ScraperOptions { Browser = settings.ScraperBrowser }, token);
 
             foreach (var date in dates)
             foreach (var discipline in disciplines)

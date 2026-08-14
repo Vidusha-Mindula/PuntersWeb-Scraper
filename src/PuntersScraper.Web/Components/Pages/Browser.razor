@@ -1,0 +1,51 @@
+@page "/browser"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@using PuntersScraper.Shared.Scraping
+@using PuntersScraper.Core.Scraping
+
+<PageTitle>Punters Meetings Scraper — Browser</PageTitle>
+
+<div class="panel">
+    <h2 style="font-size:15px;">Scrape using</h2>
+    <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-end; margin-bottom:10px;">
+        <label style="flex-direction:row; align-items:center; gap:6px;">
+            <input type="radio" name="scraperBrowser" checked="@(Settings.ScraperBrowser == ScraperBrowserChoice.Chrome)"
+                   disabled="@(!IsChromeInstalled)" @onchange="() => SetBrowser(ScraperBrowserChoice.Chrome)" />
+            Chrome (default)@(IsChromeInstalled ? "" : " (not installed)")
+        </label>
+        <label style="flex-direction:row; align-items:center; gap:6px;">
+            <input type="radio" name="scraperBrowser" checked="@(Settings.ScraperBrowser == ScraperBrowserChoice.Firefox)"
+                   disabled="@(!IsFirefoxInstalled)" @onchange="() => SetBrowser(ScraperBrowserChoice.Firefox)" />
+            Firefox@(IsFirefoxInstalled ? "" : " (not installed)")
+        </label>
+        <label style="flex-direction:row; align-items:center; gap:6px;">
+            <input type="radio" name="scraperBrowser" checked="@(Settings.ScraperBrowser == ScraperBrowserChoice.Edge)"
+                   disabled="@(!IsEdgeInstalled)" @onchange="() => SetBrowser(ScraperBrowserChoice.Edge)" />
+            Edge@(IsEdgeInstalled ? "" : " (not installed)")
+        </label>
+    </div>
+    <p style="font-size:12px;color:var(--subtle);max-width:640px;">
+        Applies to every scrape from this server — manual, and Auto Scrape. Chrome is recommended;
+        it's the only browser this app's bot-detection workarounds have actually been tested
+        against. Edge is Chromium-based too (same workarounds apply) but requires Edge to actually
+        be installed on this server. Firefox is a different rendering engine entirely — the
+        off-screen-window and automation-hiding tricks this app uses don't apply there, so it may
+        get blocked by Punters' bot-detection more easily. Greyed-out options aren't installed on
+        this server.
+    </p>
+</div>
+
+@code {
+    private PuntersScraper.Web.Services.WebAppSettings Settings = PuntersScraper.Web.Services.WebAppSettings.Load();
+
+    private bool IsChromeInstalled { get; } = ScraperBrowserAvailability.IsInstalled(ScraperBrowserChoice.Chrome);
+    private bool IsFirefoxInstalled { get; } = ScraperBrowserAvailability.IsInstalled(ScraperBrowserChoice.Firefox);
+    private bool IsEdgeInstalled { get; } = ScraperBrowserAvailability.IsInstalled(ScraperBrowserChoice.Edge);
+
+    private void SetBrowser(ScraperBrowserChoice choice)
+    {
+        Settings.ScraperBrowser = choice;
+        Settings.Save();
+    }
+}

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using PuntersScraper.Shared.Scraping;
 
 namespace PuntersScraper.Web.Services;
 
@@ -52,6 +53,10 @@ public sealed class WebAppSettings
 
     public DateTime? AutoScrapeLastRunUtc { get; set; }
     public string AutoScrapeLastRunSummary { get; set; } = "";
+
+    /// <summary>Which browser to scrape with (see the Browser page). Defaults to Chrome, the only
+    /// one these bot-detection workarounds have actually been tested against.</summary>
+    public ScraperBrowserChoice ScraperBrowser { get; set; } = ScraperBrowserChoice.Chrome;
 
     private static string FilePath => Path.Combine(AppContext.BaseDirectory, "App_Data", "settings.json");
 
