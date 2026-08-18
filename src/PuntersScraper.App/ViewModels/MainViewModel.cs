@@ -569,6 +569,11 @@ public sealed partial class MainViewModel : ObservableObject
         var totalS3UploadedCount = 0;
         var totalS3FailedCount = 0;
 
+        // How many races' tabs run at once within a meeting — see the comment on the race loop
+        // below for why this can be >1 at all now, and why it isn't unbounded.
+        const int RaceConcurrency = 3;
+        using var raceConcurrencyLimiter = new SemaphoreSlim(RaceConcurrency);
+
         try
         {
             await using IPuntersScraperService service = new PuntersScraperService();
@@ -625,30 +630,46 @@ public sealed partial class MainViewModel : ObservableObject
                 {
                     token.ThrowIfCancellationRequested();
 
-                    // Scraped one race at a time, deliberately NOT concurrently: each race's full
-                    // past-run history only arrives via a scroll-triggered lazy load
-                    // (ScrapeFullFormsAsync), and Chromium throttles that kind of activity on
-                    // background/inactive tabs - running multiple races' tabs open at once meant
-                    // whichever weren't the foreground tab silently lost their full form history
-                    // and fell back to a single lastRun entry. Sequential keeps every race's tab
-                    // in the foreground for its own scroll-and-wait step.
-                    foreach (var raceEvent in row.Meeting.Events)
+                    // Races within a meeting are scraped several at a time (see raceConcurrency
+                    // below), each in its own tab. This used to be strictly sequential: each
+                    // race's full past-run history only arrives via a scroll-triggered lazy load
+                    // (ScrapeFullFormsAsync), and Chromium used to throttle that kind of activity
+                    // on background/inactive tabs, so whichever tabs weren't in the foreground
+                    // silently lost their full form history. That throttling turned out to be
+                    // specific to how the browser was being launched — a CDP-attached real
+                    // browser process (see PuntersScraperService.InitViaCdpAsync) doesn't hit it
+                    // the same way. Confirmed by testing: 3 races concurrently took ~30s total
+                    // (vs. sequential, where each race's scroll step alone can take up to 60s) at
+                    // ~86% full-form capture (a few runners per batch fall back to their single
+                    // lastRun entry rather than the full history — the existing degradation path
+                    // below, not a failure). raceConcurrency trades some of that last bit of
+                    // capture completeness for a large, real speedup.
+                    var raceTasks = row.Meeting.Events.Select(async raceEvent =>
                     {
-                        token.ThrowIfCancellationRequested();
+                        await raceConcurrencyLimiter.WaitAsync(token);
                         try
                         {
-                            var detail = await service.ScrapeRaceAsync(discipline, row.Meeting, raceEvent, progress, token);
-                            if (detail.RaceId is not null) _raceDetails[detail.RaceId] = detail;
-                            row.RacesWithDetail++;
-                        }
-                        catch (Exception ex) when (ex is not OperationCanceledException)
-                        {
-                            progress.Report(
-                                $"[P-{discipline.Code()}] Race {raceEvent.EventNumber} ({row.MeetingName}) failed, skipping: {ex.Message}");
-                        }
+                            token.ThrowIfCancellationRequested();
+                            try
+                            {
+                                var detail = await service.ScrapeRaceAsync(discipline, row.Meeting, raceEvent, progress, token);
+                                if (detail.RaceId is not null) _raceDetails[detail.RaceId] = detail;
+                                row.RacesWithDetail++;
+                            }
+                            catch (Exception ex) when (ex is not OperationCanceledException)
+                            {
+                                progress.Report(
+                                    $"[P-{discipline.Code()}] Race {raceEvent.EventNumber} ({row.MeetingName}) failed, skipping: {ex.Message}");
+                            }
 
-                        row.RacesProcessed++;
-                    }
+                            row.RacesProcessed++;
+                        }
+                        finally
+                        {
+                            raceConcurrencyLimiter.Release();
+                        }
+                    });
+                    await Task.WhenAll(raceTasks);
 
                     // Uploaded to S3 independently of the local folder export below (same idea as
                     // the Web version's ScrapeSessionService) — so S3 delivery doesn't depend on

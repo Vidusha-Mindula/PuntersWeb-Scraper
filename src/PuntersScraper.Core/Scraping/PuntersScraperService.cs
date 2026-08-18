@@ -1,3 +1,7 @@
+using System.Diagnostics;
+using System.Net;
+using System.Net.Http;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Playwright;
@@ -41,30 +45,28 @@ public sealed class PuntersScraperService : IPuntersScraperService
 {
     private const string BaseUrl = "https://www.punters.com.au";
 
-    private const string UserAgent =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-
     private const int MaxTabDaysAhead = 4;
     private const int MaxTabDaysBack = 1;
 
     private IPlaywright? _playwright;
     private IBrowser? _browser;
+    private IBrowser? _cdpBrowser;
     private IBrowserContext? _context;
+    private Process? _browserProcess;
+    private bool _headless;
     private int _navigationTimeoutMs = 45_000;
     private int _settleDelayMs = 1500;
 
     public async Task InitializeAsync(ScraperOptions? options = null, CancellationToken cancellationToken = default)
     {
         options ??= new ScraperOptions();
+        _headless = options.Headless;
 
         _playwright = await Playwright.CreateAsync();
 
-        // Chrome and Edge are both Chromium under the hood, so the same bot-detection args and
-        // off-screen-window trick apply to both — only the Channel differs (Edge points
-        // Playwright at the system-installed Edge rather than the bundled Chromium build).
-        // Firefox is a different engine entirely: none of these Chromium-only args are
-        // meaningful there, so it launches plain (see ScraperBrowserChoice's doc comment for why
-        // that also means it's less proven against Punters' bot-detection).
+        // Firefox is a different engine entirely: none of Chromium's automation-fingerprint or
+        // bot-detection workarounds apply to it, so it launches plain (see ScraperBrowserChoice's
+        // doc comment for why that also means it's less proven against Punters' bot-detection).
         if (options.Browser == ScraperBrowserChoice.Firefox)
         {
             // Firefox has no equivalent of Chromium's "--window-position" launch argument, so
@@ -84,48 +86,218 @@ public sealed class PuntersScraperService : IPuntersScraperService
                 await OffScreenWindowMover.TryMoveOffScreenAsync(
                     "firefox", launchedAt, TimeSpan.FromSeconds(20), cancellationToken);
             }
+
+            _context = await _browser.NewContextAsync(new BrowserNewContextOptions
+            {
+                ViewportSize = new ViewportSize { Width = 1400, Height = 900 },
+                Locale = "en-AU",
+                TimezoneId = "Australia/Sydney"
+            });
+            await _context.AddInitScriptAsync(
+                "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });");
         }
         else
         {
-            var args = new List<string> { "--disable-blink-features=AutomationControlled" };
-            if (!options.Headless && options.HideWindow)
-            {
-                args.Add("--window-position=-32000,-32000");
+            // A Playwright-LAUNCHED Chromium/Edge — even with AutomationControlled disabled —
+            // still carries other automation fingerprints (--enable-automation, injected CDP init
+            // scripts) that Cloudflare's Turnstile challenge on Punters detects and refuses to
+            // validate (its own error 600010), even when the checkbox is genuinely clicked. This
+            // was confirmed by a sibling scraper against this exact site: the fix isn't a smarter
+            // click, it's not looking automated in the first place. So when the real system
+            // browser is actually installed, this starts it as an ordinary OS process (nothing
+            // Playwright-specific about the launch) and attaches to it over CDP instead — see
+            // InitViaCdpAsync. Only when that executable can't be found does this fall back to the
+            // previous Playwright-launched approach, which remains just as exposed to the same
+            // detection as before.
+            var executablePath = options.Browser == ScraperBrowserChoice.Edge
+                ? FindEdgeExecutablePath()
+                : FindChromeExecutablePath();
 
-                // Chromium treats a window positioned off-screen as occluded/not-visible and applies
-                // the same throttling it uses for background tabs (reduced timers, skipped
-                // rendering) - confirmed by testing: the full-form scroll-triggered lazy load
-                // (ScrapeFullFormsAsync's getFullFormsBySelectionIds request) never fired at all with
-                // the window off-screen, but worked immediately in a normal visible window. These
-                // flags disable that throttling specifically for occluded/backgrounded windows/timers
-                // without changing anything JS-visible on the page, so they shouldn't affect
-                // bot-detection.
-                args.Add("--disable-backgrounding-occluded-windows");
-                args.Add("--disable-renderer-backgrounding");
-                args.Add("--disable-background-timer-throttling");
+            if (executablePath is not null)
+            {
+                await InitViaCdpAsync(executablePath, options, cancellationToken);
             }
-
-            _browser = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+            else
             {
-                Headless = options.Headless,
-                Args = args,
-                Channel = options.Browser == ScraperBrowserChoice.Edge ? "msedge" : null
-            });
+                var args = new List<string> { "--disable-blink-features=AutomationControlled" };
+                if (!options.Headless && options.HideWindow)
+                {
+                    args.Add("--window-position=-32000,-32000");
+
+                    // Chromium treats a window positioned off-screen as occluded/not-visible and applies
+                    // the same throttling it uses for background tabs (reduced timers, skipped
+                    // rendering) - confirmed by testing: the full-form scroll-triggered lazy load
+                    // (ScrapeFullFormsAsync's getFullFormsBySelectionIds request) never fired at all with
+                    // the window off-screen, but worked immediately in a normal visible window. These
+                    // flags disable that throttling specifically for occluded/backgrounded windows/timers
+                    // without changing anything JS-visible on the page, so they shouldn't affect
+                    // bot-detection.
+                    args.Add("--disable-backgrounding-occluded-windows");
+                    args.Add("--disable-renderer-backgrounding");
+                    args.Add("--disable-background-timer-throttling");
+                }
+
+                _browser = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+                {
+                    Headless = options.Headless,
+                    Args = args,
+                    Channel = options.Browser == ScraperBrowserChoice.Edge ? "msedge" : null
+                });
+
+                // No UserAgent override here (deliberately): a hardcoded string goes stale the
+                // moment the bundled Chromium build moves on, and Playwright's UserAgent option
+                // only rewrites the User-Agent header/navigator.userAgent — it does NOT touch the
+                // Sec-CH-UA Client Hints headers, which keep reporting the browser's real version
+                // regardless. Confirmed by testing: with a stale "Chrome/124" override in place,
+                // the browser was still sending `sec-ch-ua: "Chromium";v="149"` (its real, much
+                // newer bundled version) on every request — a UA/Client-Hints mismatch that's a
+                // well-known, highly reliable bot signal.
+                _context = await _browser.NewContextAsync(new BrowserNewContextOptions
+                {
+                    ViewportSize = new ViewportSize { Width = 1400, Height = 900 },
+                    Locale = "en-AU",
+                    TimezoneId = "Australia/Sydney"
+                });
+                await _context.AddInitScriptAsync(
+                    "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });");
+            }
         }
-
-        _context = await _browser.NewContextAsync(new BrowserNewContextOptions
-        {
-            UserAgent = UserAgent,
-            ViewportSize = new ViewportSize { Width = 1400, Height = 900 },
-            Locale = "en-AU",
-            TimezoneId = "Australia/Sydney"
-        });
-
-        await _context.AddInitScriptAsync(
-            "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });");
 
         _navigationTimeoutMs = options.NavigationTimeoutMs;
         _settleDelayMs = options.SettleDelayMs;
+    }
+
+    // ── CDP-attach browser init (see the comment in InitializeAsync for why) ─────────────────
+
+    /// <summary>
+    /// Starts <paramref name="executablePath"/> as an ordinary OS process — not via Playwright's
+    /// own launcher — with its own on-disk profile, then attaches Playwright to it over the
+    /// Chrome DevTools Protocol. A persistent <c>--user-data-dir</c> means Cloudflare's clearance
+    /// cookie (<c>cf_clearance</c>) survives across runs once earned, so only the first run (or
+    /// the first run after it expires) actually has to clear the challenge at all.
+    /// </summary>
+    private async Task InitViaCdpAsync(string executablePath, ScraperOptions options, CancellationToken cancellationToken)
+    {
+        var userDataDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "PuntersWebScraper", "browser-profile", options.Browser.ToString().ToLowerInvariant());
+        Directory.CreateDirectory(userDataDir);
+
+        var port = FindFreeTcpPort();
+        var psi = new ProcessStartInfo { FileName = executablePath, UseShellExecute = false };
+        psi.ArgumentList.Add($"--remote-debugging-port={port}");
+        psi.ArgumentList.Add($"--user-data-dir={userDataDir}");
+        psi.ArgumentList.Add("--no-first-run");
+        psi.ArgumentList.Add("--no-default-browser-check");
+        // Stop the browser from throttling/backgrounding/discarding the controlled tab. Without
+        // these, a heavy race page can get its renderer discarded or the tab put to sleep, which
+        // drops the CDP target mid-scrape ("Target page, context or browser has been closed").
+        // NOTE: --disable-features must only ever appear ONCE on the command line — Chromium
+        // only honors the last occurrence rather than merging repeats, so every disabled
+        // feature has to be listed together here.
+        //
+        // msImplicitSignin/msSyncConsentUI: Windows' own signed-in account otherwise gets
+        // auto-detected and Edge offers to sync that real account's browsing data (passwords,
+        // history) into this profile — confirmed by testing: a "We are now syncing your
+        // browsing data..." prompt appeared unprompted, naming the actual signed-in Microsoft
+        // account. That's both a privacy problem (the user's real account/data linked into an
+        // automation profile) and a reliability one (a browser-chrome overlay the page-level
+        // Cloudflare detection below can't see or dismiss, since it isn't part of the page's
+        // own DOM). --disable-sync (a separate flag, not a --disable-features entry) stops the
+        // sync relationship itself.
+        psi.ArgumentList.Add(
+            "--disable-features=msEdgeWelcomeExperience,msFirstRunExperience,msSleepingTabs," +
+            "IntensiveWakeUpThrottling,msImplicitSignin,msSyncConsentUI");
+        psi.ArgumentList.Add("--disable-sync");
+        psi.ArgumentList.Add("--disable-background-timer-throttling");
+        psi.ArgumentList.Add("--disable-backgrounding-occluded-windows");
+        psi.ArgumentList.Add("--disable-renderer-backgrounding");
+        psi.ArgumentList.Add("--disable-dev-shm-usage");
+        if (options.Headless)
+        {
+            psi.ArgumentList.Add("--headless=new");
+        }
+        else if (options.HideWindow)
+        {
+            // Same off-screen trick as the Playwright-launched path — still a real, visible-to-
+            // Chromium window (so it isn't throttled like an actually-minimized one), just placed
+            // off the desktop. Note: this also means nobody can manually solve a Cloudflare
+            // checkbox that doesn't clear on its own — see WaitForCloudflareToClearAsync's
+            // manual-solve prompt, which needs HideWindow=false to actually be usable.
+            psi.ArgumentList.Add("--window-position=-32000,-32000");
+        }
+        else
+        {
+            psi.ArgumentList.Add("--start-maximized");
+        }
+        psi.ArgumentList.Add("about:blank");
+
+        _browserProcess = Process.Start(psi)
+            ?? throw new InvalidOperationException($"Failed to start {executablePath}.");
+
+        var endpoint = $"http://127.0.0.1:{port}";
+        using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) })
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(30);
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    var version = await http.GetStringAsync($"{endpoint}/json/version");
+                    if (!string.IsNullOrWhiteSpace(version)) break;
+                }
+                catch
+                {
+                    if (DateTime.UtcNow >= deadline)
+                    {
+                        throw new InvalidOperationException(
+                            $"{Path.GetFileName(executablePath)} DevTools endpoint did not become available within 30s.");
+                    }
+                    await Task.Delay(500, cancellationToken);
+                }
+            }
+        }
+
+        _cdpBrowser = await _playwright!.Chromium.ConnectOverCDPAsync(endpoint);
+        _context = _cdpBrowser.Contexts.Count > 0 ? _cdpBrowser.Contexts[0] : await _cdpBrowser.NewContextAsync();
+    }
+
+    private static int FindFreeTcpPort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
+    }
+
+    // Same candidate paths ScraperBrowserAvailability.IsEdgeInstalled checks for UI gating —
+    // Edge isn't downloaded by Playwright, so availability just means checking its usual
+    // install path.
+    private static string? FindEdgeExecutablePath()
+    {
+        string[] candidates =
+        [
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Microsoft", "Edge", "Application", "msedge.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft", "Edge", "Application", "msedge.exe"),
+        ];
+        return candidates.FirstOrDefault(File.Exists);
+    }
+
+    // Unlike ScraperBrowserAvailability's "Chrome" (which means Playwright's bundled Chromium
+    // download), this specifically looks for a real, separately-installed Google Chrome — the
+    // CDP-attach trick only works against a genuinely, independently-launched browser process.
+    // Falls back to the bundled Chromium in InitializeAsync when this isn't found.
+    private static string? FindChromeExecutablePath()
+    {
+        string[] candidates =
+        [
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Google", "Chrome", "Application", "chrome.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Google", "Chrome", "Application", "chrome.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Google", "Chrome", "Application", "chrome.exe"),
+        ];
+        return candidates.FirstOrDefault(File.Exists);
     }
 
     private static string FormGuidePath(Discipline discipline) => discipline switch
@@ -167,6 +339,7 @@ public sealed class PuntersScraperService : IPuntersScraperService
             });
 
             cancellationToken.ThrowIfCancellationRequested();
+            await WaitForCloudflareIfPresentAsync(page, progress, discipline.Code(), cancellationToken);
             await page.WaitForTimeoutAsync(_settleDelayMs);
             await WaitForNuxtAppAsync(page);
 
@@ -299,6 +472,7 @@ public sealed class PuntersScraperService : IPuntersScraperService
             });
 
             cancellationToken.ThrowIfCancellationRequested();
+            await WaitForCloudflareIfPresentAsync(page, progress, discipline.Code(), cancellationToken);
             await page.WaitForTimeoutAsync(_settleDelayMs);
             await WaitForNuxtAppAsync(page);
 
@@ -630,6 +804,165 @@ public sealed class PuntersScraperService : IPuntersScraperService
     private sealed class GroupedMeetingsData
     {
         public List<MeetingGroup>? MeetingsGrouped { get; set; }
+    }
+
+    // ── Cloudflare challenge handling ──────────────────────────────────────────
+    // Ported from a sibling scraper (PunterWebScraper) that already solved this exact problem
+    // against this exact site. Detection here only ever checks for the challenge's *presence*
+    // (title/body text/known selectors) — it never tries to reach into the Turnstile widget
+    // itself, since InitializeAsync/InitViaCdpAsync's CDP-attach approach is what actually gets
+    // the challenge to validate; this is just the wait-and-retry loop around that.
+
+    /// <summary>
+    /// Detects the Cloudflare interstitial by its page title and well-known challenge markers.
+    /// Deliberately conservative (returns false rather than throwing) on any evaluation failure —
+    /// a navigation in flight or a not-yet-ready page just means "unknown, let the caller retry".
+    /// </summary>
+    private static async Task<bool> IsCloudflareChallengeAsync(IPage page)
+    {
+        try
+        {
+            var title = await page.TitleAsync();
+            if (title.Contains("Just a moment", StringComparison.OrdinalIgnoreCase) ||
+                title.Contains("Checking your browser", StringComparison.OrdinalIgnoreCase) ||
+                title.Contains("Attention Required", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            return await page.EvaluateAsync<bool>("""
+                () => {
+                    const text = document.body ? document.body.innerText : '';
+                    if (/just checking your browser|checking if the site connection is secure|verify you are human/i.test(text)) return true;
+                    return !!document.querySelector('#challenge-form, #cf-challenge-running, .cf-turnstile, iframe[src*="challenges.cloudflare.com"]');
+                }
+                """);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Cloudflare Turnstile's checkbox lives inside a *closed* shadow root — confirmed by
+    /// testing: neither a plain DOM query nor Playwright's own shadow-piercing locator engine
+    /// can find anything inside it, even though the underlying challenges.cloudflare.com frame
+    /// is definitely there (Playwright's frame tracking works at the browsing-context level,
+    /// which a closed shadow root can't hide). That means no selector, in any tool, can target
+    /// the checkbox directly — the only way in is a real mouse click at its actual on-screen
+    /// position. <c>#w</c> — the div Punters' own challenge page renders the widget into — sits
+    /// in the page's own light DOM (not shadowed), so its bounding box gives real, reliable
+    /// coordinates to click within. There's no way to tell from outside the shadow root whether
+    /// it's currently showing the inert "Verifying..." spinner or the actual checkbox (both
+    /// occupy the same box), so a click landing on the spinner is just a harmless no-op — the
+    /// caller re-attempts this periodically rather than treating one attempt as definitive.
+    /// </summary>
+    private static async Task TryClickCloudflareCheckboxAsync(IPage page, CancellationToken cancellationToken)
+    {
+        var widget = page.Locator("#w");
+        if (await widget.CountAsync() == 0) return;
+
+        var box = await widget.BoundingBoxAsync();
+        if (box is not { Height: > 20 }) return;
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // Click near the checkbox's left edge (vertically centered) rather than dead center of
+        // the whole widget box, which is mostly label text rather than checkbox.
+        var targetX = box.X + 20;
+        var targetY = box.Y + box.Height / 2;
+
+        await page.Mouse.MoveAsync((float)targetX - 30, (float)targetY - 10);
+        await page.WaitForTimeoutAsync(Random.Shared.Next(150, 350));
+        await page.Mouse.MoveAsync((float)targetX, (float)targetY);
+        await page.WaitForTimeoutAsync(Random.Shared.Next(250, 500));
+        await page.Mouse.DownAsync();
+        await page.WaitForTimeoutAsync(Random.Shared.Next(60, 140));
+        await page.Mouse.UpAsync();
+    }
+
+    /// <summary>
+    /// Polls until the interstitial goes away or <paramref name="deadline"/> is hit, actively
+    /// clicking the checkbox (see TryClickCloudflareCheckboxAsync) every ~8 seconds along the
+    /// way rather than passively waiting for it to clear on its own. A Playwright-LAUNCHED
+    /// browser's clicks were rejected outright regardless of precision (Cloudflare's own error
+    /// 600010) — but InitViaCdpAsync means this is a genuinely non-automated browser instead, so
+    /// an actual click now gets evaluated on its own merits. If it's still stuck after a while
+    /// and the browser is actually visible on screen (Headless=false, HideWindow=false), this
+    /// also prints a one-time note that a human is welcome to click it too — not required, since
+    /// the automated clicking keeps running regardless, just an extra avenue. Either way, the
+    /// persistent profile then stores the clearance cookie, so later runs skip the challenge
+    /// entirely.
+    /// </summary>
+    private async Task WaitForCloudflareToClearAsync(IPage page, DateTime deadline, CancellationToken cancellationToken)
+    {
+        var start = DateTime.UtcNow;
+        var promptedForManualSolve = false;
+        var nextClickAttempt = DateTime.MinValue; // click immediately on the first iteration
+
+        while (DateTime.UtcNow < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (DateTime.UtcNow >= nextClickAttempt)
+            {
+                await TryClickCloudflareCheckboxAsync(page, cancellationToken);
+                nextClickAttempt = DateTime.UtcNow.AddSeconds(8);
+            }
+
+            await page.WaitForTimeoutAsync(2_000);
+            if (!await IsCloudflareChallengeAsync(page))
+            {
+                await page.WaitForTimeoutAsync(1_500); // let the real page render
+                return;
+            }
+
+            if (!_headless && !promptedForManualSolve && DateTime.UtcNow - start > TimeSpan.FromSeconds(30))
+            {
+                promptedForManualSolve = true;
+                Console.WriteLine();
+                Console.WriteLine("============================================================");
+                Console.WriteLine(" Cloudflare is still asking to verify the browser.");
+                Console.WriteLine(" Feel free to click the 'Verify you are human' checkbox");
+                Console.WriteLine(" yourself in the browser window that opened — scraping");
+                Console.WriteLine(" resumes automatically either way.");
+                Console.WriteLine("============================================================");
+                Console.WriteLine();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Wraps a navigation with detect → wait-for-clear → (bounded) reload-and-retry, so a
+    /// challenge that's slow but solvable doesn't get mistaken for a hard failure, and one that
+    /// genuinely won't clear still gives up rather than hanging forever. Headless runs get a
+    /// short budget (nobody can manually solve it); a visible run gets several minutes, since the
+    /// manual-solve prompt in WaitForCloudflareToClearAsync needs that time to actually be useful.
+    /// </summary>
+    private async Task WaitForCloudflareIfPresentAsync(
+        IPage page, IProgress<string>? progress, string disciplineCode, CancellationToken cancellationToken,
+        int maxAttempts = 3)
+    {
+        var budgetMs = _headless ? 90_000 : 300_000;
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!await IsCloudflareChallengeAsync(page)) return;
+
+            progress?.Report($"[P-{disciplineCode}] Cloudflare challenge detected (attempt {attempt}) — waiting for it to clear...");
+            var deadline = DateTime.UtcNow.AddMilliseconds(budgetMs);
+            await WaitForCloudflareToClearAsync(page, deadline, cancellationToken);
+
+            if (!await IsCloudflareChallengeAsync(page)) return;
+            if (attempt == maxAttempts) return; // let the caller's own diagnostics report the stuck page
+
+            progress?.Report($"[P-{disciplineCode}] Challenge still up — reloading and retrying...");
+            await page.ReloadAsync(new PageReloadOptions
+            {
+                WaitUntil = WaitUntilState.DOMContentLoaded,
+                Timeout = 60_000
+            });
+        }
     }
 
     /// <summary>
@@ -1231,8 +1564,29 @@ public sealed class PuntersScraperService : IPuntersScraperService
 
     public async ValueTask DisposeAsync()
     {
-        if (_context is not null) await _context.CloseAsync();
-        if (_browser is not null) await _browser.CloseAsync();
+        if (_cdpBrowser is not null)
+        {
+            try { await _cdpBrowser.CloseAsync(); } catch { /* already gone */ }
+        }
+        else
+        {
+            if (_context is not null) await _context.CloseAsync();
+            if (_browser is not null) await _browser.CloseAsync();
+        }
+
+        // The CDP path's browser process wasn't launched by Playwright, so it won't be cleaned
+        // up automatically — kill it ourselves.
+        try
+        {
+            if (_browserProcess is { HasExited: false })
+            {
+                _browserProcess.Kill(entireProcessTree: true);
+                _browserProcess.WaitForExit(5_000);
+            }
+        }
+        catch { /* already exited */ }
+        _browserProcess?.Dispose();
+
         _playwright?.Dispose();
     }
 }
