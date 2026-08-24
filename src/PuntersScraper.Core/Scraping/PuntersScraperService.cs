@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Playwright;
+using PuntersScraper.Core.Scraping.Adaptive;
 using PuntersScraper.Shared.Json;
 using PuntersScraper.Shared.Models;
 using PuntersScraper.Shared.Scraping;
@@ -380,8 +381,9 @@ public sealed class PuntersScraperService : IPuntersScraperService
                     _ => startDate.ToDateTime(TimeOnly.MinValue).DayOfWeek.ToString()
                 };
                 progress?.Report($"[P-{discipline.Code()}] Clicking the '{tabLabel}' date tab ...");
-                var tab = page.GetByRole(AriaRole.Tab, new PageGetByRoleOptions { Name = tabLabel, Exact = true });
-                if (await tab.CountAsync() == 0)
+                var tabByRole = page.GetByRole(AriaRole.Tab, new PageGetByRoleOptions { Name = tabLabel, Exact = true });
+                var tab = await AdaptiveLocator.FindAsync(page, tabByRole, $"date-tab:{tabLabel}", progress);
+                if (tab is null)
                 {
                     throw new PuntersScrapeException(
                         $"Could not find a '{tabLabel}' date tab on {formGuideUrl}. Punters may have changed its " +
@@ -647,8 +649,9 @@ public sealed class PuntersScraperService : IPuntersScraperService
         try
         {
             await page.EvaluateAsync("() => { const b = document.querySelector('.np-web-widget-campaign-modal'); if (b) b.remove(); }");
-            var showAllButton = page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { Name = "Show All Form", Exact = true });
-            if (await showAllButton.CountAsync() == 0)
+            var showAllButtonByRole = page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { Name = "Show All Form", Exact = true });
+            var showAllButton = await AdaptiveLocator.FindAsync(page, showAllButtonByRole, "show-all-form-button", progress);
+            if (showAllButton is null)
             {
                 progress?.Report($"[P-{discipline.Code()}] No 'Show All Form' button found; keeping each runner's single last run.");
                 return formsBySelectionId;
@@ -1027,6 +1030,42 @@ public sealed class PuntersScraperService : IPuntersScraperService
                     return `title="${document.title}" url="${location.href}" bodySnippet="${(document.body.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 200)}"`;
                 }
 
+                // Punters' Apollo cache keys its root-query entries by the operation name plus a
+                // serialized-variables suffix, e.g. "meetings({\"date\":\"2026-08-24\"})" — the
+                // exact suffix isn't ours to predict, so we only ever match on the stable prefix
+                // up to the first '('. findKeyLike() adds one more level of tolerance on top of
+                // that plain prefix match: if Punters renames/reshapes the operation itself (a
+                // real GraphQL schema change, not just different variables), it falls back to
+                // picking whichever key's own prefix is textually closest to the one expected,
+                // via a bigram-Dice similarity ratio (see AdaptiveLocator's JsScoringHelpers for
+                // the same technique used to relocate DOM elements). See
+                // docs/adaptive-scraping.md, "Beyond the DOM: the Apollo cache keys".
+                function diceRatio(a, b) {
+                    a = String(a ?? ''); b = String(b ?? '');
+                    if (a === b) return 1;
+                    if (!a.length || !b.length) return 0;
+                    const bigrams = s => { const out = []; for (let i = 0; i < s.length - 1; i++) out.push(s.slice(i, i + 2)); return out; };
+                    const ba = bigrams(a), bb = bigrams(b).slice();
+                    if (!ba.length || !bb.length) return 0;
+                    let matches = 0;
+                    for (const g of ba) {
+                        const idx = bb.indexOf(g);
+                        if (idx !== -1) { matches++; bb.splice(idx, 1); }
+                    }
+                    return (2 * matches) / (ba.length + bb.length);
+                }
+                function findKeyLike(keys, prefix) {
+                    const exact = keys.find(k => k.startsWith(prefix));
+                    if (exact) return exact;
+                    const wantHead = prefix.replace(/\($/, '');
+                    let best = null, bestScore = -1;
+                    for (const k of keys) {
+                        const score = diceRatio(k.split('(')[0], wantHead);
+                        if (score > bestScore) { bestScore = score; best = k; }
+                    }
+                    return bestScore >= 0.5 ? best : null;
+                }
+
                 const el = document.getElementById('__nuxt');
                 const app = el && el.__vue_app__;
                 const nuxt = app && app.config.globalProperties.$nuxt;
@@ -1034,8 +1073,8 @@ public sealed class PuntersScraperService : IPuntersScraperService
                 if (!cache) return JSON.stringify({ error: 'No embedded Nuxt3 apollo cache found on this page. ' + diagnostics() });
 
                 const rootQuery = cache['ROOT_QUERY'];
-                const mKey = rootQuery && Object.keys(rootQuery).find(k => k.startsWith('meetings('));
-                if (!mKey) return JSON.stringify({ error: 'No meetings(...) entry found in the embedded cache. ' + diagnostics() });
+                const mKey = rootQuery && findKeyLike(Object.keys(rootQuery), 'meetings(');
+                if (!mKey) return JSON.stringify({ error: 'No meetings(...)-like entry found in the embedded cache. ' + diagnostics() });
 
                 const resolved = resolveNuxt3(rootQuery[mKey], cache, new Set()) || [];
 
@@ -1298,6 +1337,36 @@ public sealed class PuntersScraperService : IPuntersScraperService
                     return `title="${document.title}" url="${location.href}" bodySnippet="${(document.body.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 200)}"`;
                 }
 
+                // See the matching comment in ReadEmbeddedMeetingsAsync's script above (and
+                // docs/adaptive-scraping.md, "Beyond the DOM: the Apollo cache keys") for why this
+                // falls back to a similarity match on the operation-name prefix rather than only
+                // ever trying an exact one.
+                function diceRatio(a, b) {
+                    a = String(a ?? ''); b = String(b ?? '');
+                    if (a === b) return 1;
+                    if (!a.length || !b.length) return 0;
+                    const bigrams = s => { const out = []; for (let i = 0; i < s.length - 1; i++) out.push(s.slice(i, i + 2)); return out; };
+                    const ba = bigrams(a), bb = bigrams(b).slice();
+                    if (!ba.length || !bb.length) return 0;
+                    let matches = 0;
+                    for (const g of ba) {
+                        const idx = bb.indexOf(g);
+                        if (idx !== -1) { matches++; bb.splice(idx, 1); }
+                    }
+                    return (2 * matches) / (ba.length + bb.length);
+                }
+                function findKeyLike(keys, prefix) {
+                    const exact = keys.find(k => k.startsWith(prefix));
+                    if (exact) return exact;
+                    const wantHead = prefix.replace(/\($/, '');
+                    let best = null, bestScore = -1;
+                    for (const k of keys) {
+                        const score = diceRatio(k.split('(')[0], wantHead);
+                        if (score > bestScore) { bestScore = score; best = k; }
+                    }
+                    return bestScore >= 0.5 ? best : null;
+                }
+
                 const el = document.getElementById('__nuxt');
                 const app = el && el.__vue_app__;
                 const nuxt = app && app.config.globalProperties.$nuxt;
@@ -1307,14 +1376,14 @@ public sealed class PuntersScraperService : IPuntersScraperService
                 const rootQuery = cache['ROOT_QUERY'];
                 if (!rootQuery) return JSON.stringify({ error: 'No ROOT_QUERY in the embedded cache. ' + diagnostics() });
 
-                const eventKey = Object.keys(rootQuery).find(k => k.startsWith('event('));
-                const meetingKey = Object.keys(rootQuery).find(k => k.startsWith('meeting('));
-                if (!eventKey) return JSON.stringify({ error: 'No event(...) root query found on this page. ' + diagnostics() });
+                const eventKey = findKeyLike(Object.keys(rootQuery), 'event(');
+                const meetingKey = findKeyLike(Object.keys(rootQuery), 'meeting(');
+                if (!eventKey) return JSON.stringify({ error: 'No event(...)-like root query found on this page. ' + diagnostics() });
 
                 const event_ = resolveNuxt3(rootQuery[eventKey], cache, new Set());
                 const meeting = meetingKey ? resolveNuxt3(rootQuery[meetingKey], cache, new Set()) : null;
 
-                const selKey = Object.keys(event_).find(k => k.startsWith('selections('));
+                const selKey = findKeyLike(Object.keys(event_), 'selections(');
                 const selections = selKey ? (event_[selKey] || []) : [];
 
                 function slugify(s) {
