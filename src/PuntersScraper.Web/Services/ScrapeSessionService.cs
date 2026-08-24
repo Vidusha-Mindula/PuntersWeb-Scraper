@@ -170,7 +170,9 @@ public sealed class ScrapeSessionService
                 var rows = new List<MeetingRow>();
                 try
                 {
-                    var result = await service.ScrapeMeetingsAsync(discipline, date, progress: progress, cancellationToken: token);
+                    var result = await VpnRotator.RunWithRotationOnBlockAsync(
+                        () => service.ScrapeMeetingsAsync(discipline, date, progress: progress, cancellationToken: token),
+                        progress, token);
 
                     result.MeetingsGrouped = result.MeetingsGrouped
                         .Select(g => new MeetingGroup
@@ -219,7 +221,9 @@ public sealed class ScrapeSessionService
                         token.ThrowIfCancellationRequested();
                         try
                         {
-                            var detail = await service.ScrapeRaceAsync(discipline, row.Meeting, raceEvent, progress, token);
+                            var detail = await VpnRotator.RunWithRotationOnBlockAsync(
+                                () => service.ScrapeRaceAsync(discipline, row.Meeting, raceEvent, progress, token),
+                                progress, token);
                             if (detail.RaceId is not null) _raceDetails[detail.RaceId] = detail;
                             row.RacesWithDetail++;
                         }
