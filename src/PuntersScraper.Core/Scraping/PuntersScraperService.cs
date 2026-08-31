@@ -646,35 +646,53 @@ public sealed class PuntersScraperService : IPuntersScraperService
         page.Response += OnResponse;
         try
         {
-            await page.EvaluateAsync("() => { const b = document.querySelector('.np-web-widget-campaign-modal'); if (b) b.remove(); }");
-            var showAllButton = page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { Name = "Show All Form", Exact = true });
-            if (await showAllButton.CountAsync() == 0)
+            // The 'Show All Form' widget sometimes hasn't finished mounting on the very first
+            // attempt (observed as an all-or-nothing failure: 0/N runners captured, unrelated to
+            // any specific runner) — a second attempt after a longer settle almost always succeeds
+            // where the first didn't, so retry once before giving up entirely.
+            const int maxAttempts = 2;
+            for (var attempt = 1; attempt <= maxAttempts && formsBySelectionId.Count < expectedRunnerCount; attempt++)
             {
-                progress?.Report($"[P-{discipline.Code()}] No 'Show All Form' button found; keeping each runner's single last run.");
-                return formsBySelectionId;
-            }
+                await page.EvaluateAsync("() => { const b = document.querySelector('.np-web-widget-campaign-modal'); if (b) b.remove(); }");
 
-            await showAllButton.First.ClickAsync(new LocatorClickOptions { Timeout = 10_000 });
-            await page.WaitForTimeoutAsync(500);
-
-            var overallDeadline = DateTime.UtcNow.AddSeconds(60);
-            while (formsBySelectionId.Count < expectedRunnerCount && DateTime.UtcNow < overallDeadline)
-            {
-                await page.EvaluateAsync("() => window.scrollTo(0, 0)");
-                await page.WaitForTimeoutAsync(300);
-
-                var atBottom = false;
-                while (!atBottom && formsBySelectionId.Count < expectedRunnerCount && DateTime.UtcNow < overallDeadline)
+                if (attempt > 1)
                 {
-                    await page.EvaluateAsync("() => window.scrollBy(0, 600)");
-                    await page.WaitForTimeoutAsync(350);
-                    atBottom = await page.EvaluateAsync<bool>(
-                        "() => (window.innerHeight + window.scrollY) >= document.body.scrollHeight - 10");
+                    progress?.Report($"[P-{discipline.Code()}] Retrying full-form capture (attempt {attempt}/{maxAttempts})...");
+                    await page.WaitForTimeoutAsync(2000);
                 }
-            }
 
-            // Let any request that's already in flight land before we move on.
-            await page.WaitForTimeoutAsync(1000);
+                var showAllButton = page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { Name = "Show All Form", Exact = true });
+                if (await showAllButton.CountAsync() == 0)
+                {
+                    if (attempt == maxAttempts)
+                    {
+                        progress?.Report($"[P-{discipline.Code()}] No 'Show All Form' button found; keeping each runner's single last run.");
+                    }
+                    continue;
+                }
+
+                await showAllButton.First.ClickAsync(new LocatorClickOptions { Timeout = 10_000 });
+                await page.WaitForTimeoutAsync(500);
+
+                var overallDeadline = DateTime.UtcNow.AddSeconds(60);
+                while (formsBySelectionId.Count < expectedRunnerCount && DateTime.UtcNow < overallDeadline)
+                {
+                    await page.EvaluateAsync("() => window.scrollTo(0, 0)");
+                    await page.WaitForTimeoutAsync(300);
+
+                    var atBottom = false;
+                    while (!atBottom && formsBySelectionId.Count < expectedRunnerCount && DateTime.UtcNow < overallDeadline)
+                    {
+                        await page.EvaluateAsync("() => window.scrollBy(0, 600)");
+                        await page.WaitForTimeoutAsync(350);
+                        atBottom = await page.EvaluateAsync<bool>(
+                            "() => (window.innerHeight + window.scrollY) >= document.body.scrollHeight - 10");
+                    }
+                }
+
+                // Let any request that's already in flight land before we move on.
+                await page.WaitForTimeoutAsync(1000);
+            }
 
             if (formsBySelectionId.Count < expectedRunnerCount)
             {
