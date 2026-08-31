@@ -1,5 +1,5 @@
 ﻿{
-    "id":  "20260813165024",
-    "title":  "Auto Scrape is here",
-    "message":  "You can now schedule the scraper to run automatically - covering yesterday, today, and tomorrow, across every discipline and country - instead of clicking Scrape by hand. Update to the latest version and check out the new Auto Scraper tab to set it up."
+    "id":  "20260831150749",
+    "title":  "Fix formline issue",
+    "message":  "Fixed a bug where a runner\u0027s full past-race history (formline) could silently fail to load for an entire race, leaving every runner in it showing only their single most recent run instead of the real history. Update to v3.14.1 to get the fix."
 }
