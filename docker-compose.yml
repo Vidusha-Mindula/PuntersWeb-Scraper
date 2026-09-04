@@ -15,3 +15,18 @@ services:
       args:
         VERSION: ${VERSION:-0.0.0}
     image: puntersscraper-web:${VERSION:-0.0.0}
+
+  # Local-dev RabbitMQ for testing the "meeting.scraped" event publishing (see the App's
+  # RabbitMqMeetingEventPublisher and docs/prompts/rabbitmq-meeting-events*.md). Not part of the
+  # build-artifact pipeline above — start it on its own with `docker compose up rabbitmq`. The
+  # management UI is at http://localhost:15672 (guest/guest) for inspecting the exchange/queues.
+  rabbitmq:
+    image: rabbitmq:4.3-management
+    ports:
+      - "5672:5672"    # AMQP
+      - "15672:15672"  # management UI
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5

@@ -8,6 +8,7 @@ using CommunityToolkit.Mvvm.Input;
 using PuntersScraper.App.Services;
 using PuntersScraper.Core.Scraping;
 using PuntersScraper.Shared.Json;
+using PuntersScraper.Shared.Messaging;
 using PuntersScraper.Shared.Models;
 using PuntersScraper.Shared.Scraping;
 
@@ -21,6 +22,12 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly Dictionary<string, RaceDetail> _raceDetails = new();
 
     private readonly AppSettings _settings = AppSettings.Load();
+
+    /// <summary>Publishes one "meeting.scraped" event per finished meeting (see the publish hook in
+    /// <see cref="ScrapeDatesAsync"/>). One long-lived instance, next to <see cref="_settings"/>,
+    /// disposed on app exit via <see cref="DisposeEventPublisherAsync"/> from App.OnExit.</summary>
+    private readonly RabbitMqMeetingEventPublisher _eventPublisher;
+
     private bool _loadingSettings;
 
     private UpdateInfo? _pendingUpdate;
@@ -39,6 +46,8 @@ public sealed partial class MainViewModel : ObservableObject
 
     public MainViewModel()
     {
+        _eventPublisher = new RabbitMqMeetingEventPublisher(_settings);
+
         _loadingSettings = true;
         DownloadFolder = _settings.DownloadFolder;
         AutoExportAfterScrape = _settings.AutoExportAfterScrape;
@@ -282,6 +291,10 @@ public sealed partial class MainViewModel : ObservableObject
         _settings.S3BucketName = value;
         _settings.Save();
     }
+
+    /// <summary>Closes the RabbitMQ connection on shutdown — called from App.OnExit. Bounded by a
+    /// short timeout inside the publisher so exit never hangs on an unreachable broker.</summary>
+    public ValueTask DisposeEventPublisherAsync() => _eventPublisher.DisposeAsync();
 
     // Only persist on the transition to true — RadioButtons sharing a GroupName also fire the
     // sibling's changed handler with false at the same time (as the framework unchecks it), and
@@ -569,6 +582,13 @@ public sealed partial class MainViewModel : ObservableObject
         var totalS3UploadedCount = 0;
         var totalS3FailedCount = 0;
 
+        // Per-meeting RabbitMQ event publishing (independent, non-fatal notification path — see the
+        // publish call in the race-detail loop below). One correlation id is shared by every
+        // meeting event from this single scrape run.
+        var totalEventsPublishedCount = 0;
+        var totalEventsFailedCount = 0;
+        var eventCorrelationId = Guid.NewGuid();
+
         // How many races' tabs run at once within a meeting — see the comment on the race loop
         // below for why this can be >1 at all now, and why it isn't unbounded.
         const int RaceConcurrency = 3;
@@ -690,6 +710,23 @@ public sealed partial class MainViewModel : ObservableObject
                             (failed > 0 ? $" {failed} failed." : ""));
                     }
 
+                    // Publish a "meeting.scraped" event as soon as this meeting is ready — a
+                    // parallel, lightweight notification alongside the S3 upload above, never a
+                    // replacement for it. Only the live per-meeting scrape path publishes; the
+                    // manual "Export JSON..." path (ExportMeetingAsync) deliberately does not, so
+                    // re-exporting already-scraped results never re-fires the event. Non-fatal by
+                    // contract: the publisher never throws, so a broker outage only bumps the
+                    // failed count and is surfaced in the status text — the scrape is unaffected.
+                    if (_settings.RabbitMqEnabled)
+                    {
+                        var evt = MeetingScrapedEvent.Create(
+                            discipline, row.Meeting, eventCorrelationId, _settings.RabbitMqDefaultPriority);
+                        if (await _eventPublisher.PublishMeetingScrapedAsync(evt, progress, token))
+                            totalEventsPublishedCount++;
+                        else
+                            totalEventsFailedCount++;
+                    }
+
                     // Export this meeting right away instead of waiting for every other
                     // meeting/discipline in this run to finish scraping too — so a long
                     // multi-meeting scrape has already saved each meeting as soon as it's ready,
@@ -720,6 +757,13 @@ public sealed partial class MainViewModel : ObservableObject
                     StatusText += totalS3FailedCount > 0
                         ? $" Uploaded {totalS3UploadedCount} file(s) to S3 ({totalS3FailedCount} failed — see above)."
                         : $" Uploaded {totalS3UploadedCount} file(s) to S3.";
+                }
+
+                if (_settings.RabbitMqEnabled)
+                {
+                    StatusText += totalEventsFailedCount > 0
+                        ? $" Published {totalEventsPublishedCount} RabbitMQ event(s) ({totalEventsFailedCount} failed — see above)."
+                        : $" Published {totalEventsPublishedCount} RabbitMQ event(s).";
                 }
 
                 if (AutoExportAfterScrape)
