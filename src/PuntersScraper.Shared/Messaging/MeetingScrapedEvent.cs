@@ -39,6 +39,14 @@ public sealed record MeetingScrapedEvent
 
     public string? MeetingId { get; init; }
     public string? MeetingName { get; init; }
+
+    /// <summary>File name of the meeting's exported JSON for this scrape (e.g.
+    /// "TR-2026-09-09-14-30-05-meeting.json") — the same base name written locally and uploaded to
+    /// S3 for this meeting, so a consumer can correlate the event with the exported file. Not the
+    /// full S3 key: the bucket object is prefixed with the meeting slug (e.g.
+    /// "birdsville-TR-...-meeting.json") under the configured S3 folder.</summary>
+    public string? MeetingFileName { get; init; }
+
     public string? MeetingDateLocal { get; init; }
     public string? MeetingDateUtc { get; init; }
     public string? VenueState { get; init; }
@@ -53,13 +61,15 @@ public sealed record MeetingScrapedEvent
     /// (every meeting in that run shares it); <paramref name="priority"/> is the configured default
     /// (5) — this contract never re-prioritizes after the fact.</summary>
     public static MeetingScrapedEvent Create(
-        Discipline discipline, Meeting meeting, Guid correlationId, int priority = 5) => new()
+        Discipline discipline, Meeting meeting, Guid correlationId, int priority = 5,
+        string? meetingFileName = null) => new()
     {
         Priority = priority,
         Discipline = discipline.ToString(),
         DisciplineCode = discipline.Code(),
         MeetingId = meeting.Id,
         MeetingName = meeting.Name,
+        MeetingFileName = meetingFileName,
         MeetingDateLocal = meeting.MeetingDateLocal,
         MeetingDateUtc = meeting.MeetingDateUtc,
         // Meeting.State carries the venue state (e.g. "VIC") in the scraped payload; fall back to

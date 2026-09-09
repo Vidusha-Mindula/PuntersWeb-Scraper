@@ -695,6 +695,12 @@ public sealed partial class MainViewModel : ObservableObject
                     });
                     await Task.WhenAll(raceTasks);
 
+                    // Generate this meeting's export file name once, so the S3 upload and the
+                    // RabbitMQ event below both reference the exact same name (MeetingFileName uses
+                    // DateTime.Now, so regenerating it would drift by a second and the event's
+                    // meetingFileName wouldn't match the file that was actually uploaded).
+                    var meetingFileName = MeetingFileName(discipline);
+
                     // Uploaded to S3 independently of the local folder export below (same idea as
                     // the Web version's ScrapeSessionService) — so S3 delivery doesn't depend on
                     // a download folder being configured at all. forceUploadToS3 is what lets
@@ -702,7 +708,7 @@ public sealed partial class MainViewModel : ObservableObject
                     // to S3" checkbox's current state.
                     if (UploadToS3 || forceUploadToS3)
                     {
-                        var (uploaded, failed) = await UploadMeetingToS3Async(discipline, row.Group, row.Meeting);
+                        var (uploaded, failed) = await UploadMeetingToS3Async(discipline, row.Group, row.Meeting, meetingFileName);
                         totalS3UploadedCount += uploaded;
                         totalS3FailedCount += failed;
                         progress.Report(
@@ -720,7 +726,7 @@ public sealed partial class MainViewModel : ObservableObject
                     if (_settings.RabbitMqEnabled)
                     {
                         var evt = MeetingScrapedEvent.Create(
-                            discipline, row.Meeting, eventCorrelationId, _settings.RabbitMqDefaultPriority);
+                            discipline, row.Meeting, eventCorrelationId, _settings.RabbitMqDefaultPriority, meetingFileName);
                         if (await _eventPublisher.PublishMeetingScrapedAsync(evt, progress, token))
                             totalEventsPublishedCount++;
                         else
@@ -985,7 +991,7 @@ public sealed partial class MainViewModel : ObservableObject
     /// directly from <see cref="ScrapeDatesAsync"/> as soon as each meeting's races finish,
     /// independent of local folder export, mirroring the Web version's
     /// ScrapeSessionService.UploadMeetingToS3Async.</summary>
-    private async Task<(int uploaded, int failed)> UploadMeetingToS3Async(Discipline discipline, string group, Meeting meeting)
+    private async Task<(int uploaded, int failed)> UploadMeetingToS3Async(Discipline discipline, string group, Meeting meeting, string meetingFileName)
     {
         var meetingFolderName = Slugify(meeting.Slug ?? meeting.Name ?? meeting.Id ?? "meeting");
         var uploaded = 0;
@@ -1002,7 +1008,7 @@ public sealed partial class MainViewModel : ObservableObject
             }
         };
 
-        var (u, f) = await UploadJsonToS3Async(meetingFolderName, MeetingFileName(discipline), meetingPayload);
+        var (u, f) = await UploadJsonToS3Async(meetingFolderName, meetingFileName, meetingPayload);
         uploaded += u; failed += f;
 
         foreach (var raceEvent in meeting.Events)
