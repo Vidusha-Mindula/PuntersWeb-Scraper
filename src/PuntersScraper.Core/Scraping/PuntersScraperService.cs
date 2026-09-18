@@ -407,7 +407,7 @@ public sealed class PuntersScraperService : IPuntersScraperService
 
                 await tab.First.ClickAsync(new LocatorClickOptions { Timeout = 10_000 });
 
-                bodyJson = await ReadFreshTabMeetingsAsync(page, keysBeforeClick);
+                bodyJson = await ReadFreshTabMeetingsAsync(page, keysBeforeClick, startDate);
             }
 
             using var doc = JsonDocument.Parse(bodyJson);
@@ -1137,16 +1137,23 @@ public sealed class PuntersScraperService : IPuntersScraperService
     /// <summary>
     /// Clicking a date tab (Tomorrow/a weekday) does NOT update the Apollo cache that
     /// <see cref="ReadEmbeddedMeetingsAsync"/> reads — confirmed by diffing the cache before and
-    /// after a click, it's untouched. Instead it lands in Nuxt's own useAsyncData payload under
-    /// an opaque content-hash key (unrelated to the query variables, so it can't be predicted or
-    /// searched for by name) holding an already-resolved (no __ref indirection) { meetings: [...] }
-    /// array. The only reliable way to find it is to snapshot the payload's keys before the
-    /// click and poll for whichever NEW key shows up afterwards with a .meetings array — which is
-    /// exactly what this does.
+    /// after a click, it's untouched. Instead it (usually) lands in Nuxt's own useAsyncData
+    /// payload under an opaque content-hash key (unrelated to the query variables, so it can't
+    /// be predicted or searched for by name) holding an already-resolved (no __ref indirection)
+    /// { meetings: [...] } array.
+    ///
+    /// Finding it by "whichever key is NEW since the click" alone turned out not to be reliable —
+    /// Punters can reuse an existing key for a different day's data instead of minting a new one,
+    /// which made every non-today scrape fail with "no fresh payload" even though the click
+    /// worked fine and the data was sitting right there. So a key is accepted if EITHER it's new
+    /// since the click (covers a legitimately empty result set, which has nothing date-bearing to
+    /// check), OR its meetings actually carry the requested date (covers a reused key).
     /// </summary>
-    private static async Task<string> ReadFreshTabMeetingsAsync(IPage page, string[] keysBeforeClick, int timeoutMs = 15_000)
+    private static async Task<string> ReadFreshTabMeetingsAsync(
+        IPage page, string[] keysBeforeClick, DateOnly requestedDate, int timeoutMs = 15_000)
     {
         var keysBeforeClickJs = string.Join(",", keysBeforeClick.Select(k => JsonSerializer.Serialize(k)));
+        var requestedDateJs = JsonSerializer.Serialize(requestedDate.ToString("yyyy-MM-dd"));
 
         string script = $$"""
             () => {
@@ -1155,11 +1162,18 @@ public sealed class PuntersScraperService : IPuntersScraperService
                 }
 
                 const before = new Set([{{keysBeforeClickJs}}]);
+                const requestedDate = {{requestedDateJs}};
+                const matchesRequestedDate = meetings =>
+                    Array.isArray(meetings) && meetings.some(m => typeof m.meetingDateLocal === 'string' && m.meetingDateLocal.startsWith(requestedDate));
                 const app = document.getElementById('__nuxt') && document.getElementById('__nuxt').__vue_app__;
                 const nuxt = app && app.config.globalProperties.$nuxt;
                 const data = (nuxt && nuxt.payload && nuxt.payload.data) || {};
-                const freshKey = Object.keys(data).find(k => !before.has(k) && data[k] && Array.isArray(data[k].meetings));
-                if (!freshKey) return JSON.stringify({ error: 'No fresh meetings payload appeared after clicking the date tab. ' + diagnostics() });
+                const freshKey = Object.keys(data).find(k => data[k] && Array.isArray(data[k].meetings)
+                    && (!before.has(k) || matchesRequestedDate(data[k].meetings)));
+                if (!freshKey) {
+                    const keyCount = Object.keys(data).length;
+                    return JSON.stringify({ error: `No fresh meetings payload appeared after clicking the date tab (requested ${requestedDate}, ${keyCount} payload key(s) present). ` + diagnostics() });
+                }
 
                 const resolved = data[freshKey].meetings || [];
 
@@ -1248,10 +1262,14 @@ public sealed class PuntersScraperService : IPuntersScraperService
                 $$"""
                 () => {
                     const before = new Set([{{keysBeforeClickJs}}]);
+                    const requestedDate = {{requestedDateJs}};
+                    const matchesRequestedDate = meetings =>
+                        Array.isArray(meetings) && meetings.some(m => typeof m.meetingDateLocal === 'string' && m.meetingDateLocal.startsWith(requestedDate));
                     const app = document.getElementById('__nuxt') && document.getElementById('__nuxt').__vue_app__;
                     const nuxt = app && app.config.globalProperties.$nuxt;
                     const data = (nuxt && nuxt.payload && nuxt.payload.data) || {};
-                    return Object.keys(data).some(k => !before.has(k) && data[k] && Array.isArray(data[k].meetings));
+                    return Object.keys(data).some(k => data[k] && Array.isArray(data[k].meetings)
+                        && (!before.has(k) || matchesRequestedDate(data[k].meetings)));
                 }
                 """,
                 new PageWaitForFunctionOptions { Timeout = timeoutMs, PollingInterval = 500 });
