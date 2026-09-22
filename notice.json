@@ -1,5 +1,5 @@
 ﻿{
-    "id":  "20260831150749",
-    "title":  "Fix formline issue",
-    "message":  "Fixed a bug where a runner\u0027s full past-race history (formline) could silently fail to load for an entire race, leaving every runner in it showing only their single most recent run instead of the real history. Update to v3.14.1 to get the fix."
+    "id":  "20260922112209",
+    "title":  "v3.15.0 is out",
+    "message":  "This update adds resuming a stopped scrape from where it left off, reordering meetings to control what scrapes next, a \u0027Switch version\u0027 option to roll back if needed, and a fix for missing runner odds. Please keep the app updated to the latest version."
 }
