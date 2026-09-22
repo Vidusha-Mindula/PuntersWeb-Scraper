@@ -71,14 +71,22 @@
     <table>
         <thead>
             <tr>
-                <th>Date</th><th>Discipline</th><th>Group</th><th>Meeting</th><th>State</th><th>Country</th>
+                <th>Priority</th><th>Date</th><th>Discipline</th><th>Group</th><th>Meeting</th><th>State</th><th>Country</th>
                 <th>Races</th><th>Detail</th><th>First Race</th><th>Track</th><th>Stage</th><th style="width:130px;">Progress</th>
             </tr>
         </thead>
         <tbody>
-            @foreach (var row in Session.Meetings.ToList())
+            @{ var meetings = Session.Meetings.ToList(); }
+            @for (var i = 0; i < meetings.Count; i++)
             {
+                var row = meetings[i];
                 <tr>
+                    <td style="white-space:nowrap;">
+                        <button type="button" class="secondary" style="padding:2px 6px;" disabled="@(i == 0)"
+                                title="Scrape this meeting sooner" @onclick="() => Session.MoveMeetingUp(row)">▲</button>
+                        <button type="button" class="secondary" style="padding:2px 6px;" disabled="@(i == meetings.Count - 1)"
+                                title="Scrape this meeting later" @onclick="() => Session.MoveMeetingDown(row)">▼</button>
+                    </td>
                     <td>@row.Date.ToString("yyyy-MM-dd")</td>
                     <td>@row.Discipline</td>
                     <td>@row.Group</td>
@@ -106,6 +114,10 @@
     <span>@Session.StatusText</span>
     <button type="button" class="secondary" @onclick="Session.RequestStop" disabled="@(!Session.IsBusy || Session.IsStopping)">
         @(Session.IsStopping ? "Stopping..." : "Stop")
+    </button>
+    <button type="button" class="secondary" @onclick="Session.ContinueAsync" disabled="@(!Session.CanResume)"
+            title="Resumes a stopped scrape — picks up any meeting/race that wasn't finished yet.">
+        Continue
     </button>
     <button type="button" class="secondary" @onclick="Session.ClearResults" disabled="@Session.IsBusy">Clear</button>
     @if (Session.IsBusy)

@@ -44,6 +44,14 @@ public sealed class MeetingRow
     /// works through this meeting's events — a meeting with no races reads as fully done rather
     /// than 0%.</summary>
     public int ProgressPercent => RaceCount == 0 ? 100 : (int)Math.Round(100.0 * RacesProcessed / RaceCount);
+
+    /// <summary>Set once this meeting's S3 upload has actually run — lets
+    /// <see cref="ScrapeSessionService"/>'s race-scrape loop tell "already uploaded" apart from
+    /// "not due yet", so resuming after Stop never uploads the same meeting twice.</summary>
+    public bool UploadedToS3 { get; set; }
+
+    /// <summary>Same idea as <see cref="UploadedToS3"/>, for the local JSON export step.</summary>
+    public bool ExportedLocally { get; set; }
 }
 
 /// <summary>
@@ -61,10 +69,55 @@ public sealed class ScrapeSessionService
     private readonly Dictionary<string, RaceDetail> _raceDetails = new();
     private CancellationTokenSource? _cts;
 
+    /// <summary>The exact request behind the run currently sitting in <see cref="Meetings"/> —
+    /// remembered so <see cref="ContinueAsync"/> can re-enter <see cref="ScrapeAsync"/> with the
+    /// same parameters after a Stop.</summary>
+    private ScrapeRequest? _lastScrapeRequest;
+
+    /// <summary>True only right after a run ends via Stop (not a clean finish or a hard failure).</summary>
+    private bool _canResume;
+
+    private sealed record ScrapeRequest(
+        IReadOnlyList<Discipline> Disciplines, IReadOnlyList<DateOnly> Dates, string CountryFilter, string CourseFilter, bool ForceUploadToS3);
+
     public bool IsBusy { get; private set; }
     public bool IsStopping { get; private set; }
     public string StatusText { get; private set; } = "Ready.";
     public List<MeetingRow> Meetings { get; } = new();
+
+    public bool CanResume => !IsBusy && _canResume && _lastScrapeRequest is not null;
+
+    /// <summary>Moves a meeting higher in <see cref="Meetings"/> — since <see cref="ScrapeAsync"/>'s
+    /// race-scrape phase always picks whichever unfinished meeting currently sits highest in this
+    /// same list, reordering it here (before or even while a scrape is running) directly changes
+    /// what gets scraped next.</summary>
+    public void MoveMeetingUp(MeetingRow row)
+    {
+        var index = Meetings.IndexOf(row);
+        if (index <= 0) return;
+        (Meetings[index - 1], Meetings[index]) = (Meetings[index], Meetings[index - 1]);
+        NotifyChanged();
+    }
+
+    public void MoveMeetingDown(MeetingRow row)
+    {
+        var index = Meetings.IndexOf(row);
+        if (index < 0 || index >= Meetings.Count - 1) return;
+        (Meetings[index + 1], Meetings[index]) = (Meetings[index], Meetings[index + 1]);
+        NotifyChanged();
+    }
+
+    /// <summary>Resumes the scrape stopped via <see cref="RequestStop"/> — re-enters
+    /// <see cref="ScrapeAsync"/> with the same request, which skips every date/discipline combo
+    /// already fetched and every race already recorded, so only what didn't finish gets
+    /// (re)done.</summary>
+    public async Task ContinueAsync()
+    {
+        if (_lastScrapeRequest is not { } request) return;
+        await ScrapeAsync(
+            request.Disciplines, request.Dates, request.CountryFilter, request.CourseFilter,
+            request.ForceUploadToS3, isResume: true);
+    }
 
     /// <summary>Fired whenever <see cref="StatusText"/>, <see cref="IsBusy"/>, or
     /// <see cref="Meetings"/> changes, so subscribed components know to re-render.</summary>
@@ -93,15 +146,21 @@ public sealed class ScrapeSessionService
         Meetings.Clear();
         _lastResults.Clear();
         _raceDetails.Clear();
+        _lastScrapeRequest = null;
+        _canResume = false;
         SetStatus("Ready.");
     }
 
     /// <param name="forceUploadToS3">Auto-scrape always passes true here — its whole point is
     /// unattended delivery into the bucket for TroyenRaceIngestor, so it uploads regardless of
     /// whether the manual Scraper page's "Also upload to S3" checkbox happens to be on.</param>
+    /// <param name="isResume">True when called from <see cref="ContinueAsync"/> after a Stop —
+    /// skips the usual "clear everything and start fresh" step, so meetings/races already
+    /// captured (and this run's original request) survive into this call instead of being
+    /// wiped.</param>
     public async Task ScrapeAsync(
         IReadOnlyList<Discipline> disciplines, IReadOnlyList<DateOnly> dates, string countryFilter, string courseFilter,
-        bool forceUploadToS3 = false)
+        bool forceUploadToS3 = false, bool isResume = false)
     {
         if (disciplines.Count == 0)
         {
@@ -135,10 +194,15 @@ public sealed class ScrapeSessionService
         {
             IsBusy = true;
             IsStopping = false;
-            Meetings.Clear();
-            _lastResults.Clear();
-            _raceDetails.Clear();
-            SetStatus("Starting browser...");
+            if (!isResume)
+            {
+                Meetings.Clear();
+                _lastResults.Clear();
+                _raceDetails.Clear();
+                _lastScrapeRequest = new ScrapeRequest(disciplines, dates, countryFilter, courseFilter, forceUploadToS3);
+            }
+            _canResume = false;
+            SetStatus(isResume ? "Resuming..." : "Starting browser...");
 
             IProgress<string> progress = new Progress<string>(SetStatus);
             var disciplineFailures = new List<string>();
@@ -154,6 +218,15 @@ public sealed class ScrapeSessionService
             var totalS3Failed = 0;
             var totalExported = 0;
 
+            // A meeting counts as fully done once every one of its races has recorded detail AND
+            // (whichever of these are actually enabled) its S3 upload/local export has run — see
+            // the matching comment on the desktop App's MainViewModel.ScrapeDatesAsync.
+            bool RowNeedsUploadOrExport(MeetingRow r) =>
+                ((settings.UploadToS3 || forceUploadToS3) && !r.UploadedToS3) ||
+                (settings.AutoExportAfterScrape && !string.IsNullOrWhiteSpace(settings.ExportFolder) && !r.ExportedLocally);
+            bool RowIsFullyDone(MeetingRow r) =>
+                r.Meeting.Events.All(e => e.Id is not null && _raceDetails.ContainsKey(e.Id)) && !RowNeedsUploadOrExport(r);
+
             // Headless is deliberately not exposed here: this scraper only reliably gets past
             // Punters' bot-detection in a real (non-headless) Chromium window positioned
             // off-screen — see ScraperOptions/PuntersScraperService. On this server that means
@@ -163,11 +236,17 @@ public sealed class ScrapeSessionService
             await using IPuntersScraperService service = new PuntersScraperService();
             await service.InitializeAsync(new ScraperOptions { Browser = settings.ScraperBrowser }, token);
 
+            // Phase 1 — list every requested date/discipline combo's meetings up front (just
+            // meeting-list requests, no per-race scraping yet), so the whole list is visible —
+            // and reorderable via MoveMeetingUp/MoveMeetingDown — before Phase 2 below commits to
+            // any particular scrape order. A combo already fetched on an earlier attempt
+            // (isResume, tracked via _lastResults) is skipped rather than re-fetched.
             foreach (var date in dates)
             foreach (var discipline in disciplines)
             {
                 token.ThrowIfCancellationRequested();
-                var rows = new List<MeetingRow>();
+                if (isResume && _lastResults.ContainsKey((date, discipline))) continue;
+
                 try
                 {
                     var result = await VpnRotator.RunWithRotationOnBlockAsync(
@@ -185,17 +264,17 @@ public sealed class ScrapeSessionService
 
                     _lastResults[(date, discipline)] = result;
 
+                    var addedAny = false;
                     foreach (var group in result.MeetingsGrouped)
                     {
                         foreach (var meeting in group.Meetings)
                         {
-                            var row = new MeetingRow { DisciplineEnum = discipline, Meeting = meeting, Group = group.Group ?? "", Date = date };
-                            rows.Add(row);
-                            Meetings.Add(row);
+                            Meetings.Add(new MeetingRow { DisciplineEnum = discipline, Meeting = meeting, Group = group.Group ?? "", Date = date });
+                            addedAny = true;
                         }
                     }
 
-                    if (rows.Count == 0 && (countryFilter.Length > 0 || courseFilter.Length > 0))
+                    if (!addedAny && (countryFilter.Length > 0 || courseFilter.Length > 0))
                     {
                         progress.Report($"[P-{discipline.Code()}] {date:yyyy-MM-dd}: No meetings matched the country/course filter.");
                     }
@@ -205,58 +284,71 @@ public sealed class ScrapeSessionService
                     var message = $"[P-{discipline.Code()}] {date:yyyy-MM-dd}: Failed: {ex.Message}";
                     disciplineFailures.Add(message);
                     SetStatus(message);
-                    continue;
+                }
+            }
+
+            // Phase 2 — race every meeting's full detail. Always re-picks whichever unfinished
+            // meeting currently sits highest in Meetings (rather than snapshotting an order up
+            // front), so MoveMeetingUp/MoveMeetingDown have a real, live effect on what gets
+            // scraped next — including while this phase is already running.
+            while (true)
+            {
+                token.ThrowIfCancellationRequested();
+                var row = Meetings.FirstOrDefault(r => !RowIsFullyDone(r));
+                if (row is null) break;
+
+                var discipline = row.DisciplineEnum;
+
+                // Scraped one race at a time (rather than via ScrapeRacesForMeetingAsync, which
+                // only returns once the whole meeting is done) so row.RacesWithDetail — and so the
+                // row's progress bar — advances live as each race finishes, instead of jumping
+                // straight from 0% to 100%. Only races this meeting doesn't already have detail
+                // for — on a fresh run that's all of them, on a resume it's whatever didn't
+                // finish (or was never reached) before the previous Stop.
+                foreach (var raceEvent in row.Meeting.Events)
+                {
+                    if (raceEvent.Id is not null && _raceDetails.ContainsKey(raceEvent.Id)) continue;
+
+                    token.ThrowIfCancellationRequested();
+                    try
+                    {
+                        var detail = await VpnRotator.RunWithRotationOnBlockAsync(
+                            () => service.ScrapeRaceAsync(discipline, row.Meeting, raceEvent, progress, token),
+                            progress, token);
+                        if (detail.RaceId is not null) _raceDetails[detail.RaceId] = detail;
+                        row.RacesWithDetail++;
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        progress.Report(
+                            $"[P-{discipline.Code()}] Race {raceEvent.EventNumber} ({row.MeetingName}) failed, skipping: {ex.Message}");
+                    }
+
+                    row.RacesProcessed++;
+                    NotifyChanged();
                 }
 
-                foreach (var row in rows)
+                if ((settings.UploadToS3 || forceUploadToS3) && !row.UploadedToS3)
                 {
-                    token.ThrowIfCancellationRequested();
+                    var (uploaded, failed) = await UploadMeetingToS3Async(settings, discipline, row.Group, row.Meeting);
+                    totalS3Uploaded += uploaded;
+                    totalS3Failed += failed;
+                    row.UploadedToS3 = true;
+                    progress.Report(
+                        $"[P-{discipline.Code()}] Uploaded {row.MeetingName} to S3: {uploaded} file(s)." +
+                        (failed > 0 ? $" {failed} failed." : ""));
+                }
 
-                    // Scraped one race at a time (rather than via ScrapeRacesForMeetingAsync,
-                    // which only returns once the whole meeting is done) so row.RacesWithDetail —
-                    // and so the row's progress bar — advances live as each race finishes, instead
-                    // of jumping straight from 0% to 100%.
-                    foreach (var raceEvent in row.Meeting.Events)
-                    {
-                        token.ThrowIfCancellationRequested();
-                        try
-                        {
-                            var detail = await VpnRotator.RunWithRotationOnBlockAsync(
-                                () => service.ScrapeRaceAsync(discipline, row.Meeting, raceEvent, progress, token),
-                                progress, token);
-                            if (detail.RaceId is not null) _raceDetails[detail.RaceId] = detail;
-                            row.RacesWithDetail++;
-                        }
-                        catch (Exception ex) when (ex is not OperationCanceledException)
-                        {
-                            progress.Report(
-                                $"[P-{discipline.Code()}] Race {raceEvent.EventNumber} ({row.MeetingName}) failed, skipping: {ex.Message}");
-                        }
-
-                        row.RacesProcessed++;
-                        NotifyChanged();
-                    }
-
-                    if (settings.UploadToS3 || forceUploadToS3)
-                    {
-                        var (uploaded, failed) = await UploadMeetingToS3Async(settings, discipline, row.Group, row.Meeting);
-                        totalS3Uploaded += uploaded;
-                        totalS3Failed += failed;
-                        progress.Report(
-                            $"[P-{discipline.Code()}] Uploaded {row.MeetingName} to S3: {uploaded} file(s)." +
-                            (failed > 0 ? $" {failed} failed." : ""));
-                    }
-
-                    // Deliberately independent of the S3-upload block above rather than coupled
-                    // together the way the desktop App's single "export" step does both at once
-                    // — keeping them separate avoids double-uploading a file when both toggles
-                    // are on, and suits this service's unattended/scheduled use case better.
-                    if (settings.AutoExportAfterScrape && !string.IsNullOrWhiteSpace(settings.ExportFolder))
-                    {
-                        var exported = await ExportMeetingToFolderAsync(settings.ExportFolder, discipline, row.Group, row.Meeting);
-                        totalExported += exported;
-                        progress.Report($"[P-{discipline.Code()}] Exported {row.MeetingName} to folder: {exported} file(s).");
-                    }
+                // Deliberately independent of the S3-upload block above rather than coupled
+                // together the way the desktop App's single "export" step does both at once
+                // — keeping them separate avoids double-uploading a file when both toggles
+                // are on, and suits this service's unattended/scheduled use case better.
+                if (settings.AutoExportAfterScrape && !string.IsNullOrWhiteSpace(settings.ExportFolder) && !row.ExportedLocally)
+                {
+                    var exported = await ExportMeetingToFolderAsync(settings.ExportFolder, discipline, row.Group, row.Meeting);
+                    totalExported += exported;
+                    row.ExportedLocally = true;
+                    progress.Report($"[P-{discipline.Code()}] Exported {row.MeetingName} to folder: {exported} file(s).");
                 }
             }
 
@@ -297,8 +389,10 @@ public sealed class ScrapeSessionService
         }
         catch (OperationCanceledException)
         {
+            _canResume = true;
             SetStatus($"Stopped by user. {Meetings.Count} meeting(s) loaded, " +
-                      $"{_raceDetails.Count} race(s) with full runner detail before stopping.");
+                      $"{_raceDetails.Count} race(s) with full runner detail before stopping. " +
+                      "Click Continue to pick up where it left off.");
         }
         catch (Exception ex)
         {

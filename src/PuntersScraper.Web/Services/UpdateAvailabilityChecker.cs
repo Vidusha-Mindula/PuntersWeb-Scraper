@@ -26,6 +26,11 @@ public static class UpdateAvailabilityChecker
     private static Version? CurrentVersion =>
         System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
 
+    /// <summary>The running build's version, formatted the same way releases are tagged
+    /// (e.g. "3.14.0") — the single place MainLayout reads this from, so it can never drift from
+    /// what <see cref="CheckAsync"/> itself compares against.</summary>
+    public static string CurrentVersionText => CurrentVersion?.ToString(3) ?? "dev";
+
     /// <summary>Returns the newest available Web release, or null if this is already the latest
     /// version or the check failed for any reason (offline, rate-limited, no releases yet) — a
     /// failed background check should never bother an admin with an error.</summary>
