@@ -3,8 +3,7 @@
 Scrapes the meetings/races list — and full runner/jockey/form detail per race — from
 [punters.com.au](https://www.punters.com.au) for Horses (T), Greyhounds (G) and Harness (H),
 for a chosen date. Ships as a reusable class library (`PuntersScraper.Core`) built on shared
-DTOs/utilities (`PuntersScraper.Shared`), plus a WPF desktop UI (`PuntersScraper.App`) and a
-Blazor web UI (`PuntersScraper.Web`) for scheduled/headless runs.
+DTOs/utilities (`PuntersScraper.Shared`), plus a WPF desktop UI (`PuntersScraper.App`).
 
 ## How it works
 
@@ -119,6 +118,5 @@ src/
   PuntersScraper.Core/      Scraping engine (Playwright-driven)
     Scraping/               IPuntersScraperService / PuntersScraperService
   PuntersScraper.App/       WPF desktop UI (MVVM via CommunityToolkit.Mvvm)
-  PuntersScraper.Web/       Blazor web UI, for scheduled/headless scrape sessions
 samples/                    Hand-captured example output (meetings + per-race runner data)
 ```
