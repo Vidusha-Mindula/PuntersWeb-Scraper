@@ -1545,7 +1545,16 @@ public sealed class PuntersScraperService : IPuntersScraperService
                         performanceStatistics: mapped.performanceStatistics,
                         rawStats: mapped.rawStats,
                         pointers: pointers,
-                        currentOdds: sel.startingPrice != null ? ('$' + sel.startingPrice) : null,
+                        // sel.startingPrice is a past-run-only field (the SP fixes once a race
+                        // has actually run) — it's always null here since selections() is the
+                        // CURRENT/upcoming race, confirmed by dumping a live selection's raw keys:
+                        // there is no "odds"/"fixedOdds"/"currentOdds" field on this type at all.
+                        // What Punters' own "Odds" column actually shows is the last entry of
+                        // sel.flucs.summary (its price-fluctuation history) — same array the
+                        // "Flucs" sparkline column plots, confirmed by cross-checking against
+                        // sel.puntersEdge.price, which tracked the same value on a live race.
+                        currentOdds: (sel.flucs && Array.isArray(sel.flucs.summary) && sel.flucs.summary.length > 0)
+                            ? ('$' + sel.flucs.summary[sel.flucs.summary.length - 1]) : null,
                         isScratched: sel.status === 'SCR' || sel.status === 'Scratched' || sel.status === 'SCRATCHED' || sel.status === 'WDN'
                     };
                 });

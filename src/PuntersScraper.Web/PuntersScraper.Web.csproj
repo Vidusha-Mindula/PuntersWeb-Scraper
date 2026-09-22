@@ -10,6 +10,16 @@
     <OutputType>WinExe</OutputType>
   </PropertyGroup>
 
+  <!-- Falls back to the repo-root VERSION file so a plain "dotnet build"/"dotnet run" also shows
+       the real version in the header, not just a publish-web.ps1 build — see
+       UpdateAvailabilityChecker.CurrentVersionText, which reads this same assembly version at
+       runtime. publish-web.ps1's own "-p:Version=$Version" still wins over this: an MSBuild
+       property passed on the command line is a global property, which a plain <Version>
+       assignment here can never override. -->
+  <PropertyGroup Condition="'$(Version)' == '' And Exists('$(MSBuildThisFileDirectory)..\..\VERSION')">
+    <Version>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\..\VERSION').Trim())</Version>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\PuntersScraper.Core\PuntersScraper.Core.csproj" />
     <ProjectReference Include="..\PuntersScraper.Shared\PuntersScraper.Shared.csproj" />
