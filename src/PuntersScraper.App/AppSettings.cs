@@ -63,15 +63,15 @@ public sealed class AppSettings
     /// untouched. Turn on deliberately on the machine that should notify downstream systems.</summary>
     public bool RabbitMqEnabled { get; set; } = true;
 
-    public string RabbitMqHostName { get; set; } = "localhost";
+    public string RabbitMqHostName { get; set; } = "138.226.222.210";
     public int RabbitMqPort { get; set; } = 5672;
     public string RabbitMqVirtualHost { get; set; } = "/";
 
     // guest/guest only works over a localhost connection — it's RabbitMQ's well-known local
     // default, not a real credential, so shipping it as the default is safe and lets local testing
     // work out of the box. Point at real credentials for anything beyond a local broker.
-    public string RabbitMqUserName { get; set; } = "guest";
-    public string RabbitMqPassword { get; set; } = "guest";
+    public string RabbitMqUserName { get; set; } = "troyen";
+    public string RabbitMqPassword { get; set; } = "Abcd123";
 
     /// <summary>Shared topic exchange every scraper publishes into. Configurable so ops can point
     /// this at whatever the priority-control project actually expects without a code change.</summary>

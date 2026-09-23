@@ -40,12 +40,19 @@ public sealed record MeetingScrapedEvent
     public string? MeetingId { get; init; }
     public string? MeetingName { get; init; }
 
-    /// <summary>File name of the meeting's exported JSON for this scrape (e.g.
-    /// "TR-2026-09-09-14-30-05-meeting.json") — the same base name written locally and uploaded to
-    /// S3 for this meeting, so a consumer can correlate the event with the exported file. Not the
-    /// full S3 key: the bucket object is prefixed with the meeting slug (e.g.
-    /// "birdsville-TR-...-meeting.json") under the configured S3 folder.</summary>
+    /// <summary>The meeting's exported JSON object name in S3 — the slug-prefixed name exactly as
+    /// uploaded, e.g. "swan-hill-20260922-TR-2026-09-22-11-42-50-meeting.json". It is the full
+    /// object name under the configured S3 folder (the key is "{folder}/{meetingFileName}"), so a
+    /// consumer can locate the file directly. (The local export uses the same base name nested in a
+    /// per-meeting folder.)</summary>
     public string? MeetingFileName { get; init; }
+
+    /// <summary>Slug every one of this meeting's exported files is prefixed with in S3 (e.g.
+    /// "swan-hill-20260922"). It comes from Punters' own meeting slug, so it includes the date and
+    /// cannot be reconstructed from <see cref="MeetingName"/> alone. It is the common prefix for
+    /// the meeting file AND every race DataDump file, so a consumer can list
+    /// "{folder}/{meetingSlug}-*" to find every file belonging to this meeting.</summary>
+    public string? MeetingSlug { get; init; }
 
     public string? MeetingDateLocal { get; init; }
     public string? MeetingDateUtc { get; init; }
@@ -62,7 +69,7 @@ public sealed record MeetingScrapedEvent
     /// (5) — this contract never re-prioritizes after the fact.</summary>
     public static MeetingScrapedEvent Create(
         Discipline discipline, Meeting meeting, Guid correlationId, int priority = 5,
-        string? meetingFileName = null) => new()
+        string? meetingFileName = null, string? meetingSlug = null) => new()
     {
         Priority = priority,
         Discipline = discipline.ToString(),
@@ -70,6 +77,7 @@ public sealed record MeetingScrapedEvent
         MeetingId = meeting.Id,
         MeetingName = meeting.Name,
         MeetingFileName = meetingFileName,
+        MeetingSlug = meetingSlug,
         MeetingDateLocal = meeting.MeetingDateLocal,
         MeetingDateUtc = meeting.MeetingDateUtc,
         // Meeting.State carries the venue state (e.g. "VIC") in the scraped payload; fall back to

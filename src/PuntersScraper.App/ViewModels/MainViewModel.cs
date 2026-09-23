@@ -701,6 +701,13 @@ public sealed partial class MainViewModel : ObservableObject
                     // meetingFileName wouldn't match the file that was actually uploaded).
                     var meetingFileName = MeetingFileName(discipline);
 
+                    // The slug every one of this meeting's S3 objects is prefixed with — computed
+                    // the same way UploadMeetingToS3Async/ExportMeetingAsync do (deterministic for a
+                    // given meeting), so the event's meetingSlug matches the actual bucket prefix.
+                    // Carried in the event because it can't be reconstructed from the meeting name
+                    // alone (Punters' slug includes the date, e.g. "swan-hill-20260922").
+                    var meetingSlug = Slugify(row.Meeting.Slug ?? row.Meeting.Name ?? row.Meeting.Id ?? "meeting");
+
                     // Uploaded to S3 independently of the local folder export below (same idea as
                     // the Web version's ScrapeSessionService) — so S3 delivery doesn't depend on
                     // a download folder being configured at all. forceUploadToS3 is what lets
@@ -725,8 +732,12 @@ public sealed partial class MainViewModel : ObservableObject
                     // failed count and is surfaced in the status text — the scrape is unaffected.
                     if (_settings.RabbitMqEnabled)
                     {
+                        // Carry the full S3 object base name (slug-prefixed), matching the uploaded
+                        // file exactly — e.g. "swan-hill-20260922-TR-2026-09-22-11-42-50-meeting.json".
+                        // The upload above still gets the bare name; it prepends the slug itself.
+                        var meetingObjectName = $"{meetingSlug}-{meetingFileName}";
                         var evt = MeetingScrapedEvent.Create(
-                            discipline, row.Meeting, eventCorrelationId, _settings.RabbitMqDefaultPriority, meetingFileName);
+                            discipline, row.Meeting, eventCorrelationId, _settings.RabbitMqDefaultPriority, meetingObjectName, meetingSlug);
                         if (await _eventPublisher.PublishMeetingScrapedAsync(evt, progress, token))
                             totalEventsPublishedCount++;
                         else
