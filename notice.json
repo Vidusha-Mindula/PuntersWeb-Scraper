@@ -1,5 +1,5 @@
-﻿{
-    "id":  "20260922112209",
-    "title":  "v3.15.0 is out",
-    "message":  "This update adds resuming a stopped scrape from where it left off, reordering meetings to control what scrapes next, a \u0027Switch version\u0027 option to roll back if needed, and a fix for missing runner odds. Please keep the app updated to the latest version."
+{
+    "id":  "20260925130046",
+    "title":  "v3.16.0 is out",
+    "message":  "This update adds country filtering to the Main Scraper — a multi-select country picker on the manual Scraper tab, and per-scheduled-run country/day/discipline selection (e.g. Australia at 06:00, International at 18:00) on the Auto Scraper tab. Please keep the app updated to the latest version."
 }
