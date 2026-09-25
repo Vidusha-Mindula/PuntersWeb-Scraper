@@ -166,6 +166,10 @@ public sealed partial class MainViewModel : ObservableObject
         new CountryOption { Iso2 = "MO", Name = "Macau" },
         new CountryOption { Iso2 = "DE", Name = "Germany" },
         new CountryOption { Iso2 = "CA", Name = "Canada" },
+        new CountryOption { Iso2 = "TR", Name = "Turkey" },
+        new CountryOption { Iso2 = "ES", Name = "Spain" },
+        new CountryOption { Iso2 = "MX", Name = "Mexico" },
+        new CountryOption { Iso2 = "PA", Name = "Panama" },
     };
 
     /// <summary>Shown on the picker button — e.g. "All countries", "Australia", or "3 countries"
