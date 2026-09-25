@@ -1,5 +1,5 @@
 {
-    "id":  "20260925130046",
-    "title":  "v3.16.0 is out",
-    "message":  "This update adds country filtering to the Main Scraper — a multi-select country picker on the manual Scraper tab, and per-scheduled-run country/day/discipline selection (e.g. Australia at 06:00, International at 18:00) on the Auto Scraper tab. Please keep the app updated to the latest version."
+    "id":  "20260925143506",
+    "title":  "v3.16.1 is out",
+    "message":  "This update improves the Auto Scraper's country filtering: a scheduled run's Australia and International selections are now fully independent (own day/discipline each, either can be switched off), both scrape together in one run, and the Scheduled runs section is now collapsible. Please keep the app updated to the latest version."
 }
