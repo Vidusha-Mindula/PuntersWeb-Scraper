@@ -34,14 +34,15 @@ public sealed class AppSettings
     // duplicate work. Turn it on deliberately on only one machine via the "Enabled" checkbox. ---
     public bool AutoScrapeEnabled { get; set; }
 
-    /// <summary>One entry per scheduled run — each fully independent (time, country scope,
-    /// day(s), discipline(s)), so e.g. a 06:00 slot can scrape Australia-only Horses for Today
-    /// while an 18:00 slot scrapes International Greyhounds+Harness for Today+Tomorrow. Fires once
-    /// per slot whose time matches, each day (see MainViewModel.AutoScrapeTickAsync).</summary>
+    /// <summary>One entry per scheduled time — each with independent Australia and International
+    /// day(s)/discipline(s) selections (either can be disabled), so e.g. a single 13:50 slot can
+    /// scrape Australia-only Harness for Today while ALSO scraping International Harness for
+    /// Today, in the same run. Fires once per slot whose time matches, each day (see
+    /// MainViewModel.AutoScrapeTickAsync).</summary>
     public List<AutoScrapeSlot> AutoScrapeSlots { get; set; } = new()
     {
-        new AutoScrapeSlot { Time = "06:00", CountryScope = "All" },
-        new AutoScrapeSlot { Time = "18:00", CountryScope = "All" },
+        new AutoScrapeSlot { Time = "06:00" },
+        new AutoScrapeSlot { Time = "18:00" },
     };
 
     public DateTime? AutoScrapeLastRunUtc { get; set; }

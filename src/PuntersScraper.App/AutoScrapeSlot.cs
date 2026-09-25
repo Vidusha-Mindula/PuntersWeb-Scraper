@@ -1,16 +1,12 @@
 namespace PuntersScraper.App;
 
-/// <summary>One fully independent scheduled Auto Scraper run: its own time, country scope, day(s),
-/// and discipline(s). Nothing here is shared across slots, so e.g. a 06:00 slot can scrape
-/// Australia-only Horses for Today while an 18:00 slot scrapes International Greyhounds+Harness
-/// for Today+Tomorrow.</summary>
-public sealed class AutoScrapeSlot
+/// <summary>Which day(s)/discipline(s) to scrape for one country group within a slot — see
+/// <see cref="AutoScrapeSlot"/>.</summary>
+public sealed class AutoScrapeCountryRun
 {
-    /// <summary>24h "HH:mm", e.g. "06:00".</summary>
-    public string Time { get; set; } = "06:00";
-
-    /// <summary>"All", "Australia", or "International" — see MainViewModel.ToGroupFilter.</summary>
-    public string CountryScope { get; set; } = "All";
+    /// <summary>When false, this country group is skipped entirely for this slot's time — lets a
+    /// slot cover just Australia, just International, or both.</summary>
+    public bool Enabled { get; set; } = true;
 
     public bool IncludeToday { get; set; } = true;
     public bool IncludeTomorrow { get; set; } = true;
@@ -19,4 +15,19 @@ public sealed class AutoScrapeSlot
     public bool Horses { get; set; } = true;
     public bool Greyhounds { get; set; } = true;
     public bool Harness { get; set; } = true;
+}
+
+/// <summary>One scheduled Auto Scraper time — fires <see cref="Australia"/> and/or
+/// <see cref="International"/> (whichever are enabled) back-to-back at <see cref="Time"/>, each
+/// with its own day(s)/discipline(s). This is what lets e.g. a single 13:50 slot scrape
+/// Australia-only Harness for Today while ALSO scraping International Harness for Today, in the
+/// same run, rather than needing two separate slots (which risked the second one being silently
+/// skipped if the first was still busy when its own time arrived — see AutoScrapeTickAsync).</summary>
+public sealed class AutoScrapeSlot
+{
+    /// <summary>24h "HH:mm", e.g. "06:00".</summary>
+    public string Time { get; set; } = "06:00";
+
+    public AutoScrapeCountryRun Australia { get; set; } = new();
+    public AutoScrapeCountryRun International { get; set; } = new();
 }

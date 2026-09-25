@@ -279,11 +279,15 @@
                             <CheckBox Content="Enabled" IsChecked="{Binding AutoScrapeEnabled}" Margin="0,0,0,14" VerticalAlignment="Center"
                                       ToolTip="While checked, scrapes automatically at each scheduled run below, for as long as this app stays open. If this app is installed on more than one PC, only enable this on one of them — otherwise every PC will scrape and upload at the same scheduled times." />
 
-                            <!-- Each row below is a fully independent scheduled run — its own
-                                 time, country scope, day(s), and discipline(s) — so e.g. 06:00 can
-                                 scrape Australia-only Horses for Today while 18:00 scrapes
-                                 International Greyhounds+Harness for Today+Tomorrow. -->
-                            <TextBlock Text="Scheduled runs" FontWeight="SemiBold" Margin="0,0,0,6" />
+                            <!-- Each card below is one scheduled time. Australia and International
+                                 are independent within it — either can be switched off, and each
+                                 has its own day(s)/discipline(s) — so e.g. a single 13:50 card can
+                                 scrape Australia-only Harness for Today AND International Harness
+                                 for Today, both firing back-to-back the moment 13:50 arrives.
+                                 Collapsible so a long list of scheduled runs doesn't push the live
+                                 progress grid below out of view. -->
+                            <Expander Header="Scheduled runs" FontWeight="SemiBold" IsExpanded="False" Margin="0,0,0,14">
+                            <StackPanel>
                             <ItemsControl x:Name="AutoScrapeSlotsList" ItemsSource="{Binding AutoScrapeSlots}" Margin="0,0,0,4">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
@@ -291,37 +295,76 @@
                                                 BorderThickness="1" CornerRadius="6" Padding="12,10" Margin="0,0,0,8">
                                             <StackPanel>
                                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,10" VerticalAlignment="Center">
+                                                    <TextBlock Text="Time" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
                                                     <TextBox Text="{Binding Time, UpdateSourceTrigger=PropertyChanged}" Width="70" Height="36" Padding="8,4" Margin="0,0,10,0"
-                                                             FontSize="14" VerticalContentAlignment="Center" ToolTip="24h time, e.g. 06:00" />
-                                                    <ComboBox ItemsSource="{Binding CountryScopeOptions}" SelectedItem="{Binding CountryScope}" Width="140" Height="36" Padding="8,4" Margin="0,0,10,0"
-                                                              ToolTip="Which countries this run scrapes — All, Australia only, or International (everywhere but Australia) only." />
+                                                             FontSize="14" VerticalContentAlignment="Center" ToolTip="24h time, e.g. 06:00 — Australia and International below fire together at this time." />
                                                     <Button Content="Remove" Style="{StaticResource SecondaryButton}" Width="80" Height="36" Padding="0"
                                                             Command="{Binding DataContext.RemoveAutoScrapeSlotCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
                                                             CommandParameter="{Binding}" />
                                                 </StackPanel>
-                                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8" VerticalAlignment="Center">
-                                                    <CheckBox Content="Today" IsChecked="{Binding IncludeToday}" Margin="0,0,18,0" VerticalAlignment="Center" />
-                                                    <CheckBox Content="Tomorrow" IsChecked="{Binding IncludeTomorrow}" Margin="0,0,18,0" VerticalAlignment="Center" />
-                                                    <CheckBox Content="Day after tomorrow" IsChecked="{Binding IncludeDayAfterTomorrow}" VerticalAlignment="Center" />
-                                                </StackPanel>
-                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                    <CheckBox Content="Horses (T)" IsChecked="{Binding Horses}" Margin="0,0,18,0" VerticalAlignment="Center" />
-                                                    <CheckBox Content="Greyhounds (G)" IsChecked="{Binding Greyhounds}" Margin="0,0,18,0" VerticalAlignment="Center" />
-                                                    <CheckBox Content="Harness (H)" IsChecked="{Binding Harness}" VerticalAlignment="Center" />
-                                                </StackPanel>
+
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="16" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+
+                                                    <!-- Australia column -->
+                                                    <Border Grid.Column="0" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush2}"
+                                                            BorderThickness="1" CornerRadius="6" Padding="10,8">
+                                                        <StackPanel DataContext="{Binding Australia}">
+                                                            <CheckBox Content="Australia" IsChecked="{Binding Enabled}" FontWeight="SemiBold" Margin="0,0,0,8" />
+                                                            <StackPanel IsEnabled="{Binding Enabled}">
+                                                                <WrapPanel Margin="0,0,0,6">
+                                                                    <CheckBox Content="Today" IsChecked="{Binding IncludeToday}" Margin="0,0,14,4" />
+                                                                    <CheckBox Content="Tomorrow" IsChecked="{Binding IncludeTomorrow}" Margin="0,0,14,4" />
+                                                                    <CheckBox Content="Day after tomorrow" IsChecked="{Binding IncludeDayAfterTomorrow}" Margin="0,0,0,4" />
+                                                                </WrapPanel>
+                                                                <WrapPanel>
+                                                                    <CheckBox Content="Horses (T)" IsChecked="{Binding Horses}" Margin="0,0,14,0" />
+                                                                    <CheckBox Content="Greyhounds (G)" IsChecked="{Binding Greyhounds}" Margin="0,0,14,0" />
+                                                                    <CheckBox Content="Harness (H)" IsChecked="{Binding Harness}" />
+                                                                </WrapPanel>
+                                                            </StackPanel>
+                                                        </StackPanel>
+                                                    </Border>
+
+                                                    <!-- International column -->
+                                                    <Border Grid.Column="2" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush2}"
+                                                            BorderThickness="1" CornerRadius="6" Padding="10,8">
+                                                        <StackPanel DataContext="{Binding International}">
+                                                            <CheckBox Content="International" IsChecked="{Binding Enabled}" FontWeight="SemiBold" Margin="0,0,0,8" />
+                                                            <StackPanel IsEnabled="{Binding Enabled}">
+                                                                <WrapPanel Margin="0,0,0,6">
+                                                                    <CheckBox Content="Today" IsChecked="{Binding IncludeToday}" Margin="0,0,14,4" />
+                                                                    <CheckBox Content="Tomorrow" IsChecked="{Binding IncludeTomorrow}" Margin="0,0,14,4" />
+                                                                    <CheckBox Content="Day after tomorrow" IsChecked="{Binding IncludeDayAfterTomorrow}" Margin="0,0,0,4" />
+                                                                </WrapPanel>
+                                                                <WrapPanel>
+                                                                    <CheckBox Content="Horses (T)" IsChecked="{Binding Horses}" Margin="0,0,14,0" />
+                                                                    <CheckBox Content="Greyhounds (G)" IsChecked="{Binding Greyhounds}" Margin="0,0,14,0" />
+                                                                    <CheckBox Content="Harness (H)" IsChecked="{Binding Harness}" />
+                                                                </WrapPanel>
+                                                            </StackPanel>
+                                                        </StackPanel>
+                                                    </Border>
+                                                </Grid>
                                             </StackPanel>
                                         </Border>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
                             <Button Content="+ Add scheduled run" Style="{StaticResource SecondaryButton}" HorizontalAlignment="Left"
-                                    Command="{Binding AddAutoScrapeSlotCommand}" Margin="0,0,0,14" />
+                                    Command="{Binding AddAutoScrapeSlotCommand}" />
+                            </StackPanel>
+                            </Expander>
 
                             <TextBlock Text="{Binding AutoScrapeLastRunSummary, StringFormat='Last run: {0}'}" Margin="0,0,0,0"
                                        Foreground="{StaticResource SubtleTextBrush}" FontSize="11" TextWrapping="Wrap" />
 
                             <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" FontSize="11.5" Foreground="{StaticResource SubtleTextBrush}"
-                                       Text="Fires automatically (local time) at each scheduled run's own time, scoped to that run's own country/day(s)/discipline(s), across every course — independent of the manual controls on the Scraper tab. Live progress below is the same underlying run as a manual scrape — this tab just shows it too." />
+                                       Text="Fires automatically (local time) at each scheduled run's own time — Australia and International (whichever are switched on) run back-to-back at that time, each with its own day(s)/discipline(s), across every course — independent of the manual controls on the Scraper tab. Live progress below is the same underlying run as a manual scrape — this tab just shows it too." />
                         </StackPanel>
                     </Border>
 
