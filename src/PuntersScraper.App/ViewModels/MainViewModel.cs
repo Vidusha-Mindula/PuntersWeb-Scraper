@@ -834,7 +834,8 @@ public sealed partial class MainViewModel : ObservableObject
         // separate "done" list, so it works identically whether this is a fresh run or a resume.
         bool RowNeedsUploadOrExport(MeetingRow r) =>
             ((UploadToS3 || forceUploadToS3) && !r.UploadedToS3) ||
-            (AutoExportAfterScrape && !string.IsNullOrWhiteSpace(DownloadFolder) && !r.ExportedLocally);
+            (AutoExportAfterScrape && !string.IsNullOrWhiteSpace(DownloadFolder) && !r.ExportedLocally) ||
+            (_settings.RabbitMqEnabled && !r.EventPublished);
         bool RowIsFullyDone(MeetingRow r) =>
             r.Meeting.Events.All(e => e.Id is not null && _raceDetails.ContainsKey(e.Id)) && !RowNeedsUploadOrExport(r);
 
@@ -966,68 +967,20 @@ public sealed partial class MainViewModel : ObservableObject
                     await Task.WhenAll(raceTasks);
                 }
 
-                    // Generate this meeting's export file name once, so the S3 upload and the
-                    // RabbitMQ event below both reference the exact same name (MeetingFileName uses
-                    // DateTime.Now, so regenerating it would drift by a second and the event's
-                    // meetingFileName wouldn't match the file that was actually uploaded).
-                    var meetingFileName = MeetingFileName(discipline);
+                // Generate this meeting's export file name once (and keep it on the row), so the
+                // S3 upload and the RabbitMQ event below both reference the exact same name —
+                // MeetingFileName uses DateTime.Now, so regenerating it would drift by a second
+                // and the event's meetingFileName wouldn't match the file that was actually
+                // uploaded, including when a Stop/resume lands between the two steps.
+                var meetingFileName = row.MeetingFileName ??= MeetingFileName(discipline);
 
-                    // The slug every one of this meeting's S3 objects is prefixed with — computed
-                    // the same way UploadMeetingToS3Async/ExportMeetingAsync do (deterministic for a
-                    // given meeting), so the event's meetingSlug matches the actual bucket prefix.
-                    // Carried in the event because it can't be reconstructed from the meeting name
-                    // alone (Punters' slug includes the date, e.g. "swan-hill-20260922").
-                    var meetingSlug = Slugify(row.Meeting.Slug ?? row.Meeting.Name ?? row.Meeting.Id ?? "meeting");
+                // The slug every one of this meeting's S3 objects is prefixed with — computed
+                // the same way UploadMeetingToS3Async/ExportMeetingAsync do (deterministic for a
+                // given meeting), so the event's meetingSlug matches the actual bucket prefix.
+                // Carried in the event because it can't be reconstructed from the meeting name
+                // alone (Punters' slug includes the date, e.g. "swan-hill-20260922").
+                var meetingSlug = Slugify(row.Meeting.Slug ?? row.Meeting.Name ?? row.Meeting.Id ?? "meeting");
 
-                    // Uploaded to S3 independently of the local folder export below (same idea as
-                    // the Web version's ScrapeSessionService) — so S3 delivery doesn't depend on
-                    // a download folder being configured at all. forceUploadToS3 is what lets
-                    // auto-scrape always push to the bucket regardless of the manual "Also upload
-                    // to S3" checkbox's current state.
-                    if (UploadToS3 || forceUploadToS3)
-                    {
-                        var (uploaded, failed) = await UploadMeetingToS3Async(discipline, row.Group, row.Meeting, meetingFileName);
-                        totalS3UploadedCount += uploaded;
-                        totalS3FailedCount += failed;
-                        progress.Report(
-                            $"[P-{discipline.Code()}] Uploaded {row.MeetingName} to S3: {uploaded} file(s)." +
-                            (failed > 0 ? $" {failed} failed." : ""));
-                    }
-
-                    // Publish a "meeting.scraped" event as soon as this meeting is ready — a
-                    // parallel, lightweight notification alongside the S3 upload above, never a
-                    // replacement for it. Only the live per-meeting scrape path publishes; the
-                    // manual "Export JSON..." path (ExportMeetingAsync) deliberately does not, so
-                    // re-exporting already-scraped results never re-fires the event. Non-fatal by
-                    // contract: the publisher never throws, so a broker outage only bumps the
-                    // failed count and is surfaced in the status text — the scrape is unaffected.
-                    if (_settings.RabbitMqEnabled)
-                    {
-                        // Carry the full S3 object base name (slug-prefixed), matching the uploaded
-                        // file exactly — e.g. "swan-hill-20260922-TR-2026-09-22-11-42-50-meeting.json".
-                        // The upload above still gets the bare name; it prepends the slug itself.
-                        var meetingObjectName = $"{meetingSlug}-{meetingFileName}";
-                        var evt = MeetingScrapedEvent.Create(
-                            discipline, row.Meeting, eventCorrelationId, _settings.RabbitMqDefaultPriority, meetingObjectName, meetingSlug);
-                        if (await _eventPublisher.PublishMeetingScrapedAsync(evt, progress, token))
-                            totalEventsPublishedCount++;
-                        else
-                            totalEventsFailedCount++;
-                    }
-
-                    // Export this meeting right away instead of waiting for every other
-                    // meeting/discipline in this run to finish scraping too — so a long
-                    // multi-meeting scrape has already saved each meeting as soon as it's ready,
-                    // rather than losing everything scraped so far if the run is interrupted or
-                    // fails partway through. S3 upload is handled above, not here — passing
-                    // uploadToS3: false avoids uploading the same file twice.
-                    if (AutoExportAfterScrape && !string.IsNullOrWhiteSpace(DownloadFolder))
-                    {
-                        var exportResult = await ExportMeetingAsync(discipline, row.Group, row.Meeting, DownloadFolder, uploadToS3: false);
-                        totalFileCount += exportResult.FileCount;
-                        totalMeetingFolderCount += exportResult.MeetingFolderCount;
-                        progress.Report($"[P-{discipline.Code()}] Exported {row.MeetingName}: {exportResult.FileCount} file(s).");
-                    }
                 // Uploaded to S3 independently of the local folder export below (same idea as
                 // the Web version's ScrapeSessionService) — so S3 delivery doesn't depend on
                 // a download folder being configured at all. forceUploadToS3 is what lets
@@ -1036,13 +989,37 @@ public sealed partial class MainViewModel : ObservableObject
                 // never uploads the same meeting twice.
                 if ((UploadToS3 || forceUploadToS3) && !row.UploadedToS3)
                 {
-                    var (uploaded, failed) = await UploadMeetingToS3Async(discipline, row.Group, row.Meeting);
+                    var (uploaded, failed) = await UploadMeetingToS3Async(discipline, row.Group, row.Meeting, meetingFileName);
                     totalS3UploadedCount += uploaded;
                     totalS3FailedCount += failed;
                     row.UploadedToS3 = true;
                     progress.Report(
                         $"[P-{discipline.Code()}] Uploaded {row.MeetingName} to S3: {uploaded} file(s)." +
                         (failed > 0 ? $" {failed} failed." : ""));
+                }
+
+                // Publish a "meeting.scraped" event as soon as this meeting is ready — a
+                // parallel, lightweight notification alongside the S3 upload above, never a
+                // replacement for it. Only the live per-meeting scrape path publishes; the
+                // manual "Export JSON..." path (ExportMeetingAsync) deliberately does not, so
+                // re-exporting already-scraped results never re-fires the event. Non-fatal by
+                // contract: the publisher never throws, so a broker outage only bumps the
+                // failed count and is surfaced in the status text — the scrape is unaffected.
+                // Guarded by EventPublished so a resumed run never re-publishes; it's set even
+                // on failure (like UploadedToS3), otherwise the row would never count as done.
+                if (_settings.RabbitMqEnabled && !row.EventPublished)
+                {
+                    // Carry the full S3 object base name (slug-prefixed), matching the uploaded
+                    // file exactly — e.g. "swan-hill-20260922-TR-2026-09-22-11-42-50-meeting.json".
+                    // The upload above still gets the bare name; it prepends the slug itself.
+                    var meetingObjectName = $"{meetingSlug}-{meetingFileName}";
+                    var evt = MeetingScrapedEvent.Create(
+                        discipline, row.Meeting, eventCorrelationId, _settings.RabbitMqDefaultPriority, meetingObjectName, meetingSlug);
+                    if (await _eventPublisher.PublishMeetingScrapedAsync(evt, progress, token))
+                        totalEventsPublishedCount++;
+                    else
+                        totalEventsFailedCount++;
+                    row.EventPublished = true;
                 }
 
                 // Export this meeting right away instead of waiting for every other

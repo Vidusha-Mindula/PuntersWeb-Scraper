@@ -57,6 +57,15 @@ public sealed partial class MeetingRow : ObservableObject
     /// <summary>Same idea as <see cref="UploadedToS3"/>, for the local JSON export step.</summary>
     public bool ExportedLocally { get; set; }
 
+    /// <summary>Same idea as <see cref="UploadedToS3"/>, for the RabbitMQ "meeting.scraped"
+    /// event — so a resumed run never re-publishes it.</summary>
+    public bool EventPublished { get; set; }
+
+    /// <summary>This meeting's export file name, generated once and kept, so the S3 upload and
+    /// the RabbitMQ event reference the same name even if they end up in different passes
+    /// (Stop between the two, then resume).</summary>
+    public string? MeetingFileName { get; set; }
+
     public static MeetingRow From(Discipline discipline, string group, Meeting meeting, DateOnly date) => new()
     {
         DisciplineEnum = discipline,
