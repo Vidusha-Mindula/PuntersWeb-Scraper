@@ -381,11 +381,54 @@ public sealed class PuntersScraperService : IPuntersScraperService
                 };
                 progress?.Report($"[P-{discipline.Code()}] Clicking the '{tabLabel}' date tab ...");
                 var tab = page.GetByRole(AriaRole.Tab, new PageGetByRoleOptions { Name = tabLabel, Exact = true });
+                var usingFallbackTab = false;
                 if (await tab.CountAsync() == 0)
                 {
-                    throw new PuntersScrapeException(
-                        $"Could not find a '{tabLabel}' date tab on {formGuideUrl}. Punters may have changed its " +
-                        "date-tab labels/layout since this was written.");
+                    // Punters doesn't always render a named tab for every day in its date-tab
+                    // window — confirmed live: Wednesday 2026-09-30 had no tab at all (Tomorrow
+                    // was immediately followed by Thursday), yet that same Wednesday had plenty of
+                    // its own meetings (5 Australian, plus Cambridge NZ/Fairview ZA internationally)
+                    // once actually looked for — so a missing tab does NOT mean an empty day, just
+                    // that Punters isn't exposing a dedicated one for it (why is unclear — this
+                    // doesn't try to guess). That day's meetings were still sitting in the payload
+                    // fetched by clicking the PREVIOUS existing tab (Tomorrow), so instead of giving
+                    // up, fall back to the nearest earlier tab and let ReadFreshTabMeetingsAsync
+                    // pick out just the meetings actually dated startDate from whatever that tab's
+                    // payload turns out to hold.
+                    var fallbackOffset = dayOffset - 1;
+                    var fallbackLabel = fallbackOffset switch
+                    {
+                        -1 => "Yesterday",
+                        1 => "Tomorrow",
+                        _ => startDate.AddDays(-1).ToDateTime(TimeOnly.MinValue).DayOfWeek.ToString()
+                    };
+
+                    // fallbackOffset == 0 ("Today") is deliberately not handled here — Today's
+                    // data comes from a completely different mechanism (the embedded SSR Apollo
+                    // cache, not this click-a-tab-and-read-the-payload flow), and there's no
+                    // evidence yet that Punters ever actually skips the Tomorrow tab the same way
+                    // it skips a plain weekday — so this doesn't try to guess how that would work.
+                    if (fallbackOffset == 0 || fallbackOffset < -MaxTabDaysBack)
+                    {
+                        throw new PuntersScrapeException(
+                            $"Could not find a '{tabLabel}' date tab on {formGuideUrl}, and there's no earlier tab " +
+                            "left to fall back to. Punters may have changed its date-tab labels/layout since this " +
+                            "was written.");
+                    }
+
+                    var fallbackTab = page.GetByRole(AriaRole.Tab, new PageGetByRoleOptions { Name = fallbackLabel, Exact = true });
+                    if (await fallbackTab.CountAsync() == 0)
+                    {
+                        throw new PuntersScrapeException(
+                            $"Could not find a '{tabLabel}' date tab (or its fallback, '{fallbackLabel}') on " +
+                            $"{formGuideUrl}. Punters may have changed its date-tab labels/layout since this was written.");
+                    }
+
+                    progress?.Report(
+                        $"[P-{discipline.Code()}] No '{tabLabel}' date tab on {formGuideUrl} — falling back to " +
+                        $"the '{fallbackLabel}' tab and keeping only its {startDate:yyyy-MM-dd}-dated meetings.");
+                    tab = fallbackTab;
+                    usingFallbackTab = true;
                 }
 
                 // Snapshot BEFORE clicking: clicking a date tab does not update the Apollo cache
@@ -407,7 +450,8 @@ public sealed class PuntersScraperService : IPuntersScraperService
 
                 await tab.First.ClickAsync(new LocatorClickOptions { Timeout = 10_000 });
 
-                bodyJson = await ReadFreshTabMeetingsAsync(page, keysBeforeClick, startDate);
+                bodyJson = await ReadFreshTabMeetingsAsync(
+                    page, keysBeforeClick, startDate, filterMeetingsToExactDate: usingFallbackTab);
             }
 
             using var doc = JsonDocument.Parse(bodyJson);
@@ -1168,10 +1212,12 @@ public sealed class PuntersScraperService : IPuntersScraperService
     /// check), OR its meetings actually carry the requested date (covers a reused key).
     /// </summary>
     private static async Task<string> ReadFreshTabMeetingsAsync(
-        IPage page, string[] keysBeforeClick, DateOnly requestedDate, int timeoutMs = 15_000)
+        IPage page, string[] keysBeforeClick, DateOnly requestedDate, bool filterMeetingsToExactDate = false,
+        int timeoutMs = 15_000)
     {
         var keysBeforeClickJs = string.Join(",", keysBeforeClick.Select(k => JsonSerializer.Serialize(k)));
         var requestedDateJs = JsonSerializer.Serialize(requestedDate.ToString("yyyy-MM-dd"));
+        var filterMeetingsToExactDateJs = filterMeetingsToExactDate ? "true" : "false";
 
         string script = $$"""
             () => {
@@ -1186,14 +1232,43 @@ public sealed class PuntersScraperService : IPuntersScraperService
                 const app = document.getElementById('__nuxt') && document.getElementById('__nuxt').__vue_app__;
                 const nuxt = app && app.config.globalProperties.$nuxt;
                 const data = (nuxt && nuxt.payload && nuxt.payload.data) || {};
-                const freshKey = Object.keys(data).find(k => data[k] && Array.isArray(data[k].meetings)
+                const freshKeys = Object.keys(data).filter(k => data[k] && Array.isArray(data[k].meetings)
                     && (!before.has(k) || matchesRequestedDate(data[k].meetings)));
-                if (!freshKey) {
+                if (freshKeys.length === 0) {
                     const keyCount = Object.keys(data).length;
                     return JSON.stringify({ error: `No fresh meetings payload appeared after clicking the date tab (requested ${requestedDate}, ${keyCount} payload key(s) present). ` + diagnostics() });
                 }
 
-                const resolved = data[freshKey].meetings || [];
+                // Punters can split one date tab's data across more than one payload key rather
+                // than a single combined one — confirmed live on a Tomorrow-tab click, which held
+                // two separate `.meetings` arrays at once, one with New Zealand's meetings and one
+                // without. Reading only the first qualifying key (as this used to) could silently
+                // drop whichever country group landed in the other key. Merging every qualifying
+                // key's meetings, deduped by id (a key already in `before` that merely reuses a
+                // date would otherwise resurface the same meeting twice), captures all of them
+                // regardless of how many keys Punters happens to have split them across.
+                //
+                // filterMeetingsToExactDate additionally drops any meeting not actually dated
+                // requestedDate — off by default, since a normal same-day tab intentionally mixes
+                // in a few meetings whose OWN local calendar date is a day off purely from
+                // timezone spread (e.g. UK evening racing still reads as the day before under its
+                // own clock) and those legitimately belong in that tab's result. It's turned on
+                // only when this tab is being used as a fallback for a day with no tab of its own
+                // (see the caller) — there, the tab's payload is mostly a DIFFERENT day's data
+                // that merely happens to carry the target day's meetings alongside it, so only the
+                // ones actually matching requestedDate should be kept.
+                const filterMeetingsToExactDate = {{filterMeetingsToExactDateJs}};
+                const seenIds = new Set();
+                const resolved = [];
+                for (const k of freshKeys) {
+                    for (const m of data[k].meetings) {
+                        if (!m || m.id == null || seenIds.has(m.id)) continue;
+                        if (filterMeetingsToExactDate &&
+                            !(typeof m.meetingDateLocal === 'string' && m.meetingDateLocal.startsWith(requestedDate))) continue;
+                        seenIds.add(m.id);
+                        resolved.push(m);
+                    }
+                }
 
                 function buildEvent(meeting, e) {
                     return {
@@ -1291,6 +1366,46 @@ public sealed class PuntersScraperService : IPuntersScraperService
                 }
                 """,
                 new PageWaitForFunctionOptions { Timeout = timeoutMs, PollingInterval = 500 });
+
+            // Punters can land a date tab's data in more than one wave rather than one single
+            // response — confirmed live: a fast qualifying key missing New Zealand's meetings
+            // entirely, followed shortly after by a fuller one that included them. Reading as
+            // soon as the FIRST qualifying key appears (the wait above) risks catching only that
+            // initial wave. Poll the total meeting count across every qualifying key a little
+            // longer and only proceed once it stops growing (or a hard cap is hit), so a slower
+            // second wave has a chance to land too.
+            var totalMeetingsScript = $$"""
+                () => {
+                    const before = new Set([{{keysBeforeClickJs}}]);
+                    const requestedDate = {{requestedDateJs}};
+                    const matchesRequestedDate = meetings =>
+                        Array.isArray(meetings) && meetings.some(m => typeof m.meetingDateLocal === 'string' && m.meetingDateLocal.startsWith(requestedDate));
+                    const app = document.getElementById('__nuxt') && document.getElementById('__nuxt').__vue_app__;
+                    const nuxt = app && app.config.globalProperties.$nuxt;
+                    const data = (nuxt && nuxt.payload && nuxt.payload.data) || {};
+                    return Object.keys(data)
+                        .filter(k => data[k] && Array.isArray(data[k].meetings) && (!before.has(k) || matchesRequestedDate(data[k].meetings)))
+                        .reduce((sum, k) => sum + data[k].meetings.length, 0);
+                }
+                """;
+
+            var previousTotal = -1;
+            var stableReadings = 0;
+            var stabilizeDeadline = DateTime.UtcNow.AddMilliseconds(4000);
+            while (DateTime.UtcNow < stabilizeDeadline)
+            {
+                var total = await page.EvaluateAsync<int>(totalMeetingsScript);
+                if (total == previousTotal)
+                {
+                    if (++stableReadings >= 2) break;
+                }
+                else
+                {
+                    previousTotal = total;
+                    stableReadings = 0;
+                }
+                await page.WaitForTimeoutAsync(500);
+            }
         }
         catch (TimeoutException)
         {
