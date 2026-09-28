@@ -20,7 +20,7 @@ public sealed class AppSettings
     // they're saved locally and never checked into source control.
     public string S3AccessKey { get; set; } = "";
     public string S3SecretKey { get; set; } = "";
-    public string S3BucketName { get; set; } = "troyen-gen-prod";
+    public string S3BucketName { get; set; } = "queue";
     public string S3Folder { get; set; } = "pending";
 
     /// <summary>Id of the last developer notice (see DeveloperNoticeChecker) the user explicitly
@@ -64,7 +64,7 @@ public sealed class AppSettings
     /// untouched. Turn on deliberately on the machine that should notify downstream systems.</summary>
     public bool RabbitMqEnabled { get; set; } = true;
 
-    public string RabbitMqHostName { get; set; } = "138.226.222.210";
+    public string RabbitMqHostName { get; set; } = "62.171.228.224";
     public int RabbitMqPort { get; set; } = 5672;
     public string RabbitMqVirtualHost { get; set; } = "/";
 
