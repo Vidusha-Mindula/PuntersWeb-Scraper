@@ -34,15 +34,38 @@ public sealed partial class MainViewModel : ObservableObject
     private CancellationTokenSource? _cts;
     private string? _pendingNoticeId;
 
+    /// <summary>The exact request (disciplines/dates/filters) behind the run currently sitting in
+    /// <see cref="Meetings"/> — remembered so <see cref="ContinueAsync"/> can re-enter
+    /// <see cref="ScrapeDatesAsync"/> with the same parameters after a Stop, rather than needing
+    /// the user to re-select everything.</summary>
+    private ScrapeRequest? _lastScrapeRequest;
+
+    /// <summary>True only right after a run ends via Stop (not a clean finish or a hard failure) —
+    /// gates <see cref="ContinueCommand"/> so it's only ever offered when there's actually
+    /// unfinished work left over from <see cref="_lastScrapeRequest"/>.</summary>
+    private bool _canResume;
+
+    /// <summary>One discipline/date combo plus which country group it's scoped to — a single
+    /// <see cref="ScrapeDatesAsync"/> call takes a list of these so e.g. Australia and
+    /// International (each with their own day(s)/discipline(s)) can be listed and scraped
+    /// together, in one browser session, instead of needing separate calls.</summary>
+    private sealed record ScrapeSubRequest(List<Discipline> Disciplines, List<DateOnly> Dates, string GroupFilter);
+
+    private sealed record ScrapeRequest(
+        List<ScrapeSubRequest> SubRequests, string CountryFilter, string CourseFilter, bool ForceUploadToS3);
+
     /// <summary>Ticks on the UI thread (via WPF's Dispatcher) so its handler can safely touch
     /// <see cref="Meetings"/> and other bound properties directly, the same as a button click —
     /// a background <see cref="System.Threading.Timer"/> would require manual Dispatcher.Invoke
     /// marshaling to avoid a cross-thread collection exception.</summary>
     private readonly DispatcherTimer _autoScrapeTimer;
 
-    /// <summary>"{yyyy-MM-dd}T{HH:mm}" of the last slot that actually fired — guards against
-    /// firing twice for the same configured time if a tick happens to land on it more than once.</summary>
-    private string? _lastAutoScrapeSlotKey;
+    /// <summary>"{yyyy-MM-dd}T{HH:mm}" of every slot that's already fired today — guards against
+    /// firing the same slot twice if a tick happens to land on its time more than once (a slot's
+    /// Australia and International runs both count as part of that one firing). Pruned back to
+    /// just today's entries on each tick rather than ever being cleared outright, so it doesn't
+    /// grow unbounded across a long-running session.</summary>
+    private readonly HashSet<string> _firedAutoScrapeSlotKeys = new();
 
     public MainViewModel()
     {
@@ -54,18 +77,19 @@ public sealed partial class MainViewModel : ObservableObject
         UploadToS3 = _settings.UploadToS3;
         S3BucketName = _settings.S3BucketName;
         AutoScrapeEnabled = _settings.AutoScrapeEnabled;
-        AutoScrapeTimesOfDay = _settings.AutoScrapeTimesOfDay;
-        AutoScrapeIncludeToday = _settings.AutoScrapeIncludeToday;
-        AutoScrapeIncludeTomorrow = _settings.AutoScrapeIncludeTomorrow;
-        AutoScrapeIncludeDayAfterTomorrow = _settings.AutoScrapeIncludeDayAfterTomorrow;
-        AutoScrapeHorses = _settings.AutoScrapeHorses;
-        AutoScrapeGreyhounds = _settings.AutoScrapeGreyhounds;
-        AutoScrapeHarness = _settings.AutoScrapeHarness;
+        foreach (var slot in _settings.AutoScrapeSlots)
+        {
+            var row = AutoScrapeSlotRow.From(slot);
+            row.Changed += SaveAutoScrapeSlots;
+            AutoScrapeSlots.Add(row);
+        }
         AutoScrapeLastRunSummary = _settings.AutoScrapeLastRunSummary;
         UseFirefoxBrowser = _settings.ScraperBrowser == nameof(ScraperBrowserChoice.Firefox);
         UseEdgeBrowser = _settings.ScraperBrowser == nameof(ScraperBrowserChoice.Edge);
         UseChromeBrowser = !UseFirefoxBrowser && !UseEdgeBrowser;
         _loadingSettings = false;
+
+        foreach (var option in CountryOptions) option.SelectionChanged += RecomputeCountryCodeFilter;
 
         _ = CheckForUpdatesAsync();
         _ = CheckForDeveloperNoticeAsync();
@@ -114,9 +138,91 @@ public sealed partial class MainViewModel : ObservableObject
     public bool IsFirefoxInstalled { get; } = ScraperBrowserAvailability.IsInstalled(ScraperBrowserChoice.Firefox);
     public bool IsEdgeInstalled { get; } = ScraperBrowserAvailability.IsInstalled(ScraperBrowserChoice.Edge);
 
-    /// <summary>Optional filter: only scrape meetings whose venue country matches this ISO2 code (e.g. "AU", "NZ", "US"). Blank = no filter.</summary>
+    /// <summary>Comma-separated ISO2 codes of every checked <see cref="CountryOptions"/> row plus
+    /// every code typed into <see cref="ManualCountryCodes"/> (e.g. "AU,NZ,US"), recomputed by
+    /// <see cref="RecomputeCountryCodeFilter"/> whenever either changes. Blank = no filter. This is
+    /// what's actually passed to <see cref="ScrapeDatesAsync"/> — the checklist and text box are
+    /// just its UI.</summary>
     [ObservableProperty]
     private string countryCodeFilter = "";
+
+    /// <summary>Free-text ISO2 codes (comma/space-separated, e.g. "IN, SE") for countries not on
+    /// the curated <see cref="CountryOptions"/> list — merged into <see cref="CountryCodeFilter"/>
+    /// alongside whatever's checked, rather than replacing it.</summary>
+    [ObservableProperty]
+    private string manualCountryCodes = "";
+
+    partial void OnManualCountryCodesChanged(string value) => RecomputeCountryCodeFilter();
+
+    /// <summary>Curated checklist backing the manual Scraper tab's country picker. Deliberately a
+    /// fixed common-racing-countries list rather than derived from live scrape results — there's
+    /// no way to know what countries exist for a date without already having scraped it, which is
+    /// the very thing this filter exists to narrow down before doing. Extend this list by hand if
+    /// Punters starts covering somewhere not on it.</summary>
+    public ObservableCollection<CountryOption> CountryOptions { get; } = new()
+    {
+        new CountryOption { Iso2 = "AU", Name = "Australia" },
+        new CountryOption { Iso2 = "NZ", Name = "New Zealand" },
+        new CountryOption { Iso2 = "GB", Name = "United Kingdom" },
+        new CountryOption { Iso2 = "IE", Name = "Ireland" },
+        new CountryOption { Iso2 = "FR", Name = "France" },
+        new CountryOption { Iso2 = "US", Name = "United States" },
+        new CountryOption { Iso2 = "HK", Name = "Hong Kong" },
+        new CountryOption { Iso2 = "SG", Name = "Singapore" },
+        new CountryOption { Iso2 = "JP", Name = "Japan" },
+        new CountryOption { Iso2 = "ZA", Name = "South Africa" },
+        new CountryOption { Iso2 = "AE", Name = "UAE" },
+        new CountryOption { Iso2 = "MO", Name = "Macau" },
+        new CountryOption { Iso2 = "DE", Name = "Germany" },
+        new CountryOption { Iso2 = "CA", Name = "Canada" },
+        new CountryOption { Iso2 = "TR", Name = "Turkey" },
+        new CountryOption { Iso2 = "ES", Name = "Spain" },
+        new CountryOption { Iso2 = "MX", Name = "Mexico" },
+        new CountryOption { Iso2 = "PA", Name = "Panama" },
+    };
+
+    /// <summary>Shown on the picker button — e.g. "All countries", "Australia", or "3 countries"
+    /// once more than two codes are active (comma-joining every name gets unreadable past that).
+    /// See <see cref="SelectedCountriesDetail"/> for the untruncated version shown below it.</summary>
+    public string CountryFilterSummary
+    {
+        get
+        {
+            var codes = ParseCountryCodes(CountryCodeFilter);
+            if (codes.Length == 0) return "All countries";
+            return codes.Length > 2 ? $"{codes.Length} countries" : string.Join(", ", CountryLabels(codes));
+        }
+    }
+
+    /// <summary>Every active country's full name (or raw code, if it's a manually-typed one not on
+    /// the curated list), comma-joined with nothing left out — unlike <see cref="CountryFilterSummary"/>,
+    /// which truncates past two so the picker button itself stays a fixed width. Bound below the
+    /// picker so the exact selection stays visible without reopening the popup. Empty when nothing
+    /// is selected (all countries).</summary>
+    public string SelectedCountriesDetail => string.Join(", ", CountryLabels(ParseCountryCodes(CountryCodeFilter)));
+
+    public bool HasCountriesSelected => CountryCodeFilter.Length > 0;
+
+    private IEnumerable<string> CountryLabels(IEnumerable<string> codes) => codes.Select(code =>
+        CountryOptions.FirstOrDefault(c => string.Equals(c.Iso2, code, StringComparison.OrdinalIgnoreCase))?.Name
+        ?? code.ToUpperInvariant());
+
+    [RelayCommand]
+    private void ClearCountrySelection()
+    {
+        foreach (var option in CountryOptions) option.IsSelected = false;
+        ManualCountryCodes = "";
+    }
+
+    private void RecomputeCountryCodeFilter()
+    {
+        var checkedCodes = CountryOptions.Where(c => c.IsSelected).Select(c => c.Iso2);
+        var manualCodes = ParseCountryCodes(ManualCountryCodes).Select(c => c.ToUpperInvariant());
+        CountryCodeFilter = string.Join(",", checkedCodes.Concat(manualCodes).Distinct(StringComparer.OrdinalIgnoreCase));
+        OnPropertyChanged(nameof(CountryFilterSummary));
+        OnPropertyChanged(nameof(SelectedCountriesDetail));
+        OnPropertyChanged(nameof(HasCountriesSelected));
+    }
 
     /// <summary>Optional filter: only scrape meetings whose course/meeting name contains this text (case-insensitive). Blank = no filter.</summary>
     [ObservableProperty]
@@ -155,33 +261,39 @@ public sealed partial class MainViewModel : ObservableObject
     private string s3BucketName = "";
 
     /// <summary>When set, <see cref="AutoScrapeTickAsync"/> fires a scrape automatically at each
-    /// listed time in <see cref="AutoScrapeTimesOfDay"/>, for as long as this app stays open —
-    /// there is no scheduling once the app is closed.</summary>
+    /// slot in <see cref="AutoScrapeSlots"/> whose time matches, for as long as this app stays
+    /// open — there is no scheduling once the app is closed.</summary>
     [ObservableProperty]
     private bool autoScrapeEnabled;
 
-    /// <summary>Comma-separated 24h "HH:mm" times, e.g. "06:00,18:00" — fires once per listed time
-    /// each day, so multiple daily runs are just multiple entries here.</summary>
-    [ObservableProperty]
-    private string autoScrapeTimesOfDay = "06:00,18:00";
+    /// <summary>Every scheduled time, editable on the Auto Scraper tab — each with its own
+    /// independent Australia and International day(s)/discipline(s) selection (either or both can
+    /// be disabled). Each row persists itself (via <see cref="SaveAutoScrapeSlots"/>) whenever its
+    /// time or either country's settings change, same pattern as <see cref="CountryOptions"/>.</summary>
+    public ObservableCollection<AutoScrapeSlotRow> AutoScrapeSlots { get; } = new();
 
-    [ObservableProperty]
-    private bool autoScrapeIncludeToday = true;
+    [RelayCommand]
+    private void AddAutoScrapeSlot()
+    {
+        var row = new AutoScrapeSlotRow();
+        row.Changed += SaveAutoScrapeSlots;
+        AutoScrapeSlots.Add(row);
+        SaveAutoScrapeSlots();
+    }
 
-    [ObservableProperty]
-    private bool autoScrapeIncludeTomorrow = true;
+    [RelayCommand]
+    private void RemoveAutoScrapeSlot(AutoScrapeSlotRow? row)
+    {
+        if (row is null) return;
+        AutoScrapeSlots.Remove(row);
+        SaveAutoScrapeSlots();
+    }
 
-    [ObservableProperty]
-    private bool autoScrapeIncludeDayAfterTomorrow = true;
-
-    [ObservableProperty]
-    private bool autoScrapeHorses = true;
-
-    [ObservableProperty]
-    private bool autoScrapeGreyhounds = true;
-
-    [ObservableProperty]
-    private bool autoScrapeHarness = true;
+    private void SaveAutoScrapeSlots()
+    {
+        _settings.AutoScrapeSlots = AutoScrapeSlots.Select(r => r.ToSlot()).ToList();
+        _settings.Save();
+    }
 
     [ObservableProperty]
     private string autoScrapeLastRunSummary = "";
@@ -211,6 +323,98 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool isUpdateDownloadIndeterminate;
 
+    // --- "Switch version" (see the Browser tab) — installs any past release on demand, not just
+    // whatever CheckAsync surfaces automatically, so this is also how a downgrade is done: pick
+    // an older version from the list and click Install, same silent install/relaunch flow as the
+    // update banner's "Update Now". ---
+
+    public ObservableCollection<ReleaseInfo> AvailableReleases { get; } = new();
+
+    [ObservableProperty]
+    private ReleaseInfo? selectedRelease;
+
+    [ObservableProperty]
+    private bool isLoadingReleases;
+
+    [ObservableProperty]
+    private bool isInstallingVersion;
+
+    [ObservableProperty]
+    private string versionPickerStatus = "";
+
+    partial void OnSelectedReleaseChanged(ReleaseInfo? value) => InstallSelectedVersionCommand.NotifyCanExecuteChanged();
+
+    partial void OnIsLoadingReleasesChanged(bool value) => LoadReleasesCommand.NotifyCanExecuteChanged();
+
+    partial void OnIsInstallingVersionChanged(bool value)
+    {
+        LoadReleasesCommand.NotifyCanExecuteChanged();
+        InstallSelectedVersionCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>Populates <see cref="AvailableReleases"/> from GitHub — not done automatically at
+    /// startup (unlike the newer-version banner's own background check) since this is an
+    /// on-demand "show me the options" action, not something worth an API call every launch.</summary>
+    [RelayCommand(CanExecute = nameof(CanLoadReleases))]
+    private async Task LoadReleasesAsync()
+    {
+        IsLoadingReleases = true;
+        VersionPickerStatus = "Checking available versions...";
+
+        var releases = await UpdateChecker.ListReleasesAsync();
+        AvailableReleases.Clear();
+        foreach (var release in releases) AvailableReleases.Add(release);
+
+        SelectedRelease = AvailableReleases.FirstOrDefault(r => r.DisplayText != $"v{AppVersion}") ?? AvailableReleases.FirstOrDefault();
+        VersionPickerStatus = AvailableReleases.Count == 0
+            ? "Couldn't load releases from GitHub — check your connection, or the repo isn't configured yet."
+            : $"{AvailableReleases.Count} version(s) available. Currently running v{AppVersion}.";
+
+        IsLoadingReleases = false;
+    }
+
+    private bool CanLoadReleases() => !IsLoadingReleases && !IsInstallingVersion;
+
+    /// <summary>Downloads and silently installs <see cref="SelectedRelease"/> — identical flow to
+    /// <see cref="UpdateNowAsync"/>, just against whichever release the user picked instead of
+    /// always the newest. Inno Setup's own [Files] entries use "ignoreversion" (see
+    /// installer/PuntersScraper.iss), so installing an older build over a newer one really does
+    /// downgrade the files on disk rather than being silently skipped.</summary>
+    [RelayCommand(CanExecute = nameof(CanInstallSelectedVersion))]
+    private async Task InstallSelectedVersionAsync()
+    {
+        if (SelectedRelease is not { } release) return;
+
+        try
+        {
+            IsInstallingVersion = true;
+            VersionPickerStatus = $"Downloading {release.DisplayText}... 0%";
+
+            IProgress<double> downloadProgress = new Progress<double>(pct =>
+            {
+                VersionPickerStatus = pct < 0
+                    ? $"Downloading {release.DisplayText}..."
+                    : $"Downloading {release.DisplayText}... {pct:0}%";
+            });
+
+            var installerPath = await UpdateChecker.DownloadInstallerAsync(release.DownloadUrl, downloadProgress);
+
+            VersionPickerStatus = "Launching installer...";
+            UpdateChecker.LaunchInstaller(installerPath);
+
+            // Same reasoning as UpdateNowAsync: the installer needs this process's files
+            // unlocked, so closing right after launching it is what makes that possible.
+            System.Windows.Application.Current.Shutdown();
+        }
+        catch (Exception ex)
+        {
+            VersionPickerStatus = $"Install failed: {ex.Message}";
+            IsInstallingVersion = false;
+        }
+    }
+
+    private bool CanInstallSelectedVersion() => SelectedRelease is not null && !IsInstallingVersion;
+
     /// <summary>True once a developer notice (see DeveloperNoticeChecker) the user hasn't already
     /// dismissed has been found — drives the "Developer Note" banner's visibility.</summary>
     [ObservableProperty]
@@ -224,13 +428,59 @@ public sealed partial class MainViewModel : ObservableObject
 
     public ObservableCollection<MeetingRow> Meetings { get; } = new();
 
+    /// <summary>Read once from the running build's own assembly metadata (see UpdateChecker,
+    /// which already reads this to compare against GitHub releases) — the single source both the
+    /// title bar and header subtitle display from, so they can never show a different version than
+    /// what the update check itself is comparing against.</summary>
+    public string AppVersion => UpdateChecker.CurrentVersionText;
+
+    public string WindowTitle => $"Punters Meetings Scraper v{AppVersion}  ·  by VM";
+
     partial void OnIsBusyChanged(bool value)
     {
         ScrapeCommand.NotifyCanExecuteChanged();
         ExportJsonCommand.NotifyCanExecuteChanged();
         StopCommand.NotifyCanExecuteChanged();
         ClearResultsCommand.NotifyCanExecuteChanged();
+        ContinueCommand.NotifyCanExecuteChanged();
     }
+
+    /// <summary>Moves a meeting higher in <see cref="Meetings"/> — since the race-scrape loop in
+    /// <see cref="ScrapeDatesAsync"/> always picks whichever unfinished meeting currently sits
+    /// highest in this same list, reordering it here (before or even while a scrape is running)
+    /// directly changes what gets scraped next.</summary>
+    [RelayCommand]
+    private void MoveMeetingUp(MeetingRow? row)
+    {
+        if (row is null) return;
+        var index = Meetings.IndexOf(row);
+        if (index <= 0) return;
+        Meetings.Move(index, index - 1);
+    }
+
+    [RelayCommand]
+    private void MoveMeetingDown(MeetingRow? row)
+    {
+        if (row is null) return;
+        var index = Meetings.IndexOf(row);
+        if (index < 0 || index >= Meetings.Count - 1) return;
+        Meetings.Move(index, index + 1);
+    }
+
+    /// <summary>Resumes the scrape stopped via <see cref="Stop"/> — re-enters
+    /// <see cref="ScrapeDatesAsync"/> with the same request, which skips every date/discipline
+    /// combo already fetched and every race already recorded, so only what didn't finish gets
+    /// (re)done.</summary>
+    [RelayCommand(CanExecute = nameof(CanContinue))]
+    private async Task ContinueAsync()
+    {
+        if (_lastScrapeRequest is not { } request) return;
+        await ScrapeDatesAsync(
+            request.SubRequests, request.CountryFilter, request.CourseFilter,
+            request.ForceUploadToS3, isResume: true);
+    }
+
+    private bool CanContinue() => !IsBusy && _canResume && _lastScrapeRequest is not null;
 
     partial void OnIsStoppingChanged(bool value) => StopCommand.NotifyCanExecuteChanged();
 
@@ -259,6 +509,9 @@ public sealed partial class MainViewModel : ObservableObject
         Meetings.Clear();
         _lastResults.Clear();
         _raceDetails.Clear();
+        _lastScrapeRequest = null;
+        _canResume = false;
+        ContinueCommand.NotifyCanExecuteChanged();
         StatusText = "Ready.";
     }
 
@@ -328,89 +581,59 @@ public sealed partial class MainViewModel : ObservableObject
         _settings.Save();
     }
 
-    partial void OnAutoScrapeTimesOfDayChanged(string value)
-    {
-        if (_loadingSettings) return;
-        _settings.AutoScrapeTimesOfDay = value;
-        _settings.Save();
-    }
-
-    partial void OnAutoScrapeIncludeTodayChanged(bool value)
-    {
-        if (_loadingSettings) return;
-        _settings.AutoScrapeIncludeToday = value;
-        _settings.Save();
-    }
-
-    partial void OnAutoScrapeIncludeTomorrowChanged(bool value)
-    {
-        if (_loadingSettings) return;
-        _settings.AutoScrapeIncludeTomorrow = value;
-        _settings.Save();
-    }
-
-    partial void OnAutoScrapeIncludeDayAfterTomorrowChanged(bool value)
-    {
-        if (_loadingSettings) return;
-        _settings.AutoScrapeIncludeDayAfterTomorrow = value;
-        _settings.Save();
-    }
-
-    partial void OnAutoScrapeHorsesChanged(bool value)
-    {
-        if (_loadingSettings) return;
-        _settings.AutoScrapeHorses = value;
-        _settings.Save();
-    }
-
-    partial void OnAutoScrapeGreyhoundsChanged(bool value)
-    {
-        if (_loadingSettings) return;
-        _settings.AutoScrapeGreyhounds = value;
-        _settings.Save();
-    }
-
-    partial void OnAutoScrapeHarnessChanged(bool value)
-    {
-        if (_loadingSettings) return;
-        _settings.AutoScrapeHarness = value;
-        _settings.Save();
-    }
-
-    /// <summary>Ticks every 30s on the UI thread; fires <see cref="ScrapeDatesAsync"/> once per
-    /// configured time-of-day slot, for whichever days/disciplines are configured for auto-scrape
-    /// (independent of the manual panel's own selections above), across every country/course.</summary>
+    /// <summary>Ticks every 30s on the UI thread. Every <see cref="AutoScrapeSlots"/> entry whose
+    /// time matches now, times its enabled country run(s) (Australia and/or International) into
+    /// one combined <see cref="ScrapeDatesAsync"/> call — a single browser session that lists
+    /// every one of them up front and only then scrapes full race detail for the combined set, so
+    /// e.g. Australia's and International's meetings both end up in the grid together rather than
+    /// International only appearing once Australia is already fully done.</summary>
     private async Task AutoScrapeTickAsync()
     {
         if (!AutoScrapeEnabled || IsBusy) return;
 
         var now = DateTime.Now;
-        var currentSlot = now.ToString("HH:mm");
-        var configuredTimes = AutoScrapeTimesOfDay.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (!configuredTimes.Contains(currentSlot)) return;
+        var todayPrefix = now.ToString("yyyy-MM-dd");
+        _firedAutoScrapeSlotKeys.RemoveWhere(k => !k.StartsWith(todayPrefix, StringComparison.Ordinal));
 
-        var slotKey = $"{now:yyyy-MM-dd}T{currentSlot}";
-        if (slotKey == _lastAutoScrapeSlotKey) return;
-        _lastAutoScrapeSlotKey = slotKey;
-
-        var disciplines = new List<Discipline>();
-        if (AutoScrapeHorses) disciplines.Add(Discipline.Horses);
-        if (AutoScrapeGreyhounds) disciplines.Add(Discipline.Greyhounds);
-        if (AutoScrapeHarness) disciplines.Add(Discipline.Harness);
-        if (disciplines.Count == 0) return;
+        var currentTime = now.ToString("HH:mm");
+        var dueSlots = AutoScrapeSlots
+            .Where(s => s.Time == currentTime)
+            .Where(s => _firedAutoScrapeSlotKeys.Add($"{todayPrefix}T{s.Time}"))
+            .ToList();
+        if (dueSlots.Count == 0) return;
 
         var today = DateOnly.FromDateTime(now);
-        var dates = new List<DateOnly>();
-        if (AutoScrapeIncludeToday) dates.Add(today);
-        if (AutoScrapeIncludeTomorrow) dates.Add(today.AddDays(1));
-        if (AutoScrapeIncludeDayAfterTomorrow) dates.Add(today.AddDays(2));
-        if (dates.Count == 0) return;
+        var requests = new List<ScrapeSubRequest>();
+        var firedLabels = new List<string>();
 
-        await ScrapeDatesAsync(disciplines, dates, countryFilter: "", courseFilter: "", forceUploadToS3: true);
+        foreach (var slot in dueSlots)
+        foreach (var (groupName, run) in new[] { ("Australia", slot.Australia), ("International", slot.International) })
+        {
+            if (!run.Enabled) continue;
 
-        AutoScrapeLastRunSummary = StatusText;
+            var disciplines = new List<Discipline>();
+            if (run.Horses) disciplines.Add(Discipline.Horses);
+            if (run.Greyhounds) disciplines.Add(Discipline.Greyhounds);
+            if (run.Harness) disciplines.Add(Discipline.Harness);
+            if (disciplines.Count == 0) continue;
+
+            var dates = new List<DateOnly>();
+            if (run.IncludeToday) dates.Add(today);
+            if (run.IncludeTomorrow) dates.Add(today.AddDays(1));
+            if (run.IncludeDayAfterTomorrow) dates.Add(today.AddDays(2));
+            if (dates.Count == 0) continue;
+
+            requests.Add(new ScrapeSubRequest(disciplines, dates, groupName));
+            firedLabels.Add($"{slot.Time} {groupName}");
+        }
+
+        if (requests.Count == 0) return;
+
+        await ScrapeDatesAsync(requests, countryFilter: "", courseFilter: "", forceUploadToS3: true);
+
+        AutoScrapeLastRunSummary = $"[{string.Join(", ", firedLabels)}] {StatusText}";
         _settings.AutoScrapeLastRunUtc = DateTime.UtcNow;
-        _settings.AutoScrapeLastRunSummary = StatusText;
+        _settings.AutoScrapeLastRunSummary = AutoScrapeLastRunSummary;
         _settings.Save();
     }
 
@@ -533,27 +756,33 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
+        var subRequest = new ScrapeSubRequest(disciplines, new List<DateOnly> { DateOnly.FromDateTime(SelectedDate) }, GroupFilter: "");
         await ScrapeDatesAsync(
-            disciplines,
-            new List<DateOnly> { DateOnly.FromDateTime(SelectedDate) },
+            new List<ScrapeSubRequest> { subRequest },
             CountryCodeFilter.Trim(),
             CourseNameFilter.Trim());
     }
 
     /// <summary>
     /// Shared scrape orchestration behind both the manual Scrape button (a single-element
-    /// <paramref name="dates"/> list built from <see cref="SelectedDate"/>) and the auto-scrape
-    /// timer (<see cref="AutoScrapeTick"/>, typically yesterday/today/tomorrow) — one browser
-    /// session covers every date/discipline combination in <paramref name="dates"/> x
-    /// <paramref name="disciplines"/>, with results from every date accumulating into the same
-    /// <see cref="Meetings"/> grid.
+    /// <paramref name="requests"/> list built from <see cref="SelectedDate"/>) and the auto-scrape
+    /// timer (<see cref="AutoScrapeTickAsync"/>, one sub-request per enabled country) — one
+    /// browser session covers every discipline/date combo across every sub-request, with results
+    /// from all of them accumulating into the same <see cref="Meetings"/> grid. Listing (Phase 1)
+    /// happens for every sub-request before race-detail scraping (Phase 2) starts for any of them,
+    /// so e.g. Australia's and International's meetings both show up together quickly rather than
+    /// International only appearing once Australia's full race detail is already done.
     /// </summary>
     /// <param name="forceUploadToS3">Auto-scrape always passes true here — its whole point is
     /// unattended delivery into the bucket for TroyenRaceIngestor, so it uploads regardless of
     /// whether the manual Scraper tab's "Also upload to S3" checkbox happens to be on.</param>
+    /// <param name="isResume">True when called from <see cref="ContinueAsync"/> after a Stop —
+    /// skips the usual "clear everything and start fresh" step, so meetings/races already
+    /// captured (and this run's original request, in <see cref="_lastScrapeRequest"/>) survive
+    /// into this call instead of being wiped.</param>
     private async Task ScrapeDatesAsync(
-        List<Discipline> disciplines, List<DateOnly> dates, string countryFilter, string courseFilter,
-        bool forceUploadToS3 = false)
+        List<ScrapeSubRequest> requests, string countryFilter, string courseFilter,
+        bool forceUploadToS3 = false, bool isResume = false)
     {
         var browser = SelectedScraperBrowser;
         if (!ScraperBrowserAvailability.IsInstalled(browser))
@@ -567,10 +796,15 @@ public sealed partial class MainViewModel : ObservableObject
 
         IsBusy = true;
         IsStopping = false;
-        Meetings.Clear();
-        _lastResults.Clear();
-        _raceDetails.Clear();
-        StatusText = "Starting browser...";
+        if (!isResume)
+        {
+            Meetings.Clear();
+            _lastResults.Clear();
+            _raceDetails.Clear();
+            _lastScrapeRequest = new ScrapeRequest(requests, countryFilter, courseFilter, forceUploadToS3);
+        }
+        _canResume = false;
+        StatusText = isResume ? "Resuming..." : "Starting browser...";
 
         IProgress<string> progress = new Progress<string>(msg => StatusText = msg);
         var disciplineFailures = new List<string>();
@@ -594,48 +828,67 @@ public sealed partial class MainViewModel : ObservableObject
         const int RaceConcurrency = 3;
         using var raceConcurrencyLimiter = new SemaphoreSlim(RaceConcurrency);
 
+        // A meeting counts as fully done once every one of its races has recorded detail AND
+        // (whichever of these are actually enabled) its S3 upload/local export has run —
+        // evaluated live off current checkbox state and _raceDetails/row flags rather than any
+        // separate "done" list, so it works identically whether this is a fresh run or a resume.
+        bool RowNeedsUploadOrExport(MeetingRow r) =>
+            ((UploadToS3 || forceUploadToS3) && !r.UploadedToS3) ||
+            (AutoExportAfterScrape && !string.IsNullOrWhiteSpace(DownloadFolder) && !r.ExportedLocally);
+        bool RowIsFullyDone(MeetingRow r) =>
+            r.Meeting.Events.All(e => e.Id is not null && _raceDetails.ContainsKey(e.Id)) && !RowNeedsUploadOrExport(r);
+
         try
         {
             await using IPuntersScraperService service = new PuntersScraperService();
             await service.InitializeAsync(new ScraperOptions { Headless = Headless, Browser = SelectedScraperBrowser }, token);
 
-            foreach (var date in dates)
-            foreach (var discipline in disciplines)
+            // Phase 1 — list every requested date/discipline combo's meetings up front (just
+            // meeting-list requests, no per-race scraping yet), so the whole list is visible —
+            // and reorderable via the grid's Priority Up/Down buttons — before Phase 2 below
+            // commits to any particular scrape order. Fetched once per unique (date, discipline)
+            // combo even if more than one sub-request wants it (e.g. an Australia sub-request and
+            // an International sub-request both wanting Today's Harness) — one fetch already
+            // returns every country, so each matching sub-request just applies its own group
+            // filter to that one result rather than fetching it again. A combo already fetched on
+            // an earlier attempt (isResume, tracked via _lastResults) is skipped rather than
+            // re-fetched.
+            var uniqueCombos = requests
+                .SelectMany(r => r.Dates.SelectMany(date => r.Disciplines.Select(discipline => (date, discipline))))
+                .Distinct();
+            foreach (var (date, discipline) in uniqueCombos)
             {
                 token.ThrowIfCancellationRequested();
-                var rows = new List<MeetingRow>();
+                if (isResume && _lastResults.ContainsKey((date, discipline))) continue;
+
                 try
                 {
                     var result = await VpnRotator.RunWithRotationOnBlockAsync(
                         () => service.ScrapeMeetingsAsync(discipline, date, progress: progress, cancellationToken: token),
                         progress, token);
 
-                    // Apply the country/course filters right away, so nothing downstream
-                    // (grid, race-detail scraping, export) ever sees or processes a meeting
-                    // that doesn't match — this is what makes the filters actually skip the
-                    // slow per-race scraping for excluded meetings, not just hide them.
-                    result.MeetingsGrouped = result.MeetingsGrouped
-                        .Select(g => new MeetingGroup
-                        {
-                            Group = g.Group,
-                            Meetings = g.Meetings.Where(m => MatchesFilters(m, countryFilter, courseFilter)).ToList()
-                        })
-                        .Where(g => g.Meetings.Count > 0)
-                        .ToList();
-
                     _lastResults[(date, discipline)] = result;
 
+                    // Every sub-request wanting this combo applies its own group/country/course
+                    // filter right away, so nothing downstream (grid, race-detail scraping,
+                    // export) ever sees or processes a meeting that doesn't match — this is what
+                    // makes the filters actually skip the slow per-race scraping for excluded
+                    // meetings, not just hide them.
+                    var matchingRequests = requests.Where(r => r.Dates.Contains(date) && r.Disciplines.Contains(discipline)).ToList();
+                    var addedAny = false;
+                    foreach (var request in matchingRequests)
                     foreach (var group in result.MeetingsGrouped)
                     {
-                        foreach (var meeting in group.Meetings)
+                        if (request.GroupFilter.Length > 0 && group.Group != request.GroupFilter) continue;
+
+                        foreach (var meeting in group.Meetings.Where(m => MatchesFilters(m, countryFilter, courseFilter)))
                         {
-                            var row = MeetingRow.From(discipline, group.Group ?? "", meeting, date);
-                            rows.Add(row);
-                            Meetings.Add(row);
+                            Meetings.Add(MeetingRow.From(discipline, group.Group ?? "", meeting, date));
+                            addedAny = true;
                         }
                     }
 
-                    if (rows.Count == 0 && (countryFilter.Length > 0 || courseFilter.Length > 0))
+                    if (!addedAny && (countryFilter.Length > 0 || courseFilter.Length > 0 || matchingRequests.Any(r => r.GroupFilter.Length > 0)))
                     {
                         progress.Report($"[P-{discipline.Code()}] {date:yyyy-MM-dd}: No meetings matched the country/course filter.");
                     }
@@ -645,13 +898,30 @@ public sealed partial class MainViewModel : ObservableObject
                     var message = $"[P-{discipline.Code()}] {date:yyyy-MM-dd}: Failed: {ex.Message}";
                     disciplineFailures.Add(message);
                     StatusText = message;
-                    continue;
                 }
+            }
 
-                foreach (var row in rows)
+            // Phase 2 — race every meeting's full detail. Always re-picks whichever unfinished
+            // meeting currently sits highest in Meetings (rather than snapshotting an order up
+            // front), so the Priority Up/Down buttons have a real, live effect on what gets
+            // scraped next — including while this phase is already running.
+            while (true)
+            {
+                token.ThrowIfCancellationRequested();
+                var row = Meetings.FirstOrDefault(r => !RowIsFullyDone(r));
+                if (row is null) break;
+
+                var discipline = row.DisciplineEnum;
+
+                // Only races this meeting doesn't already have detail for — on a fresh run
+                // that's all of them, on a resume it's whatever didn't finish (or was never
+                // reached) before the previous Stop.
+                var pendingEvents = row.Meeting.Events
+                    .Where(e => e.Id is null || !_raceDetails.ContainsKey(e.Id))
+                    .ToList();
+
+                if (pendingEvents.Count > 0)
                 {
-                    token.ThrowIfCancellationRequested();
-
                     // Races within a meeting are scraped several at a time (see raceConcurrency
                     // below), each in its own tab. This used to be strictly sequential: each
                     // race's full past-run history only arrives via a scroll-triggered lazy load
@@ -666,7 +936,7 @@ public sealed partial class MainViewModel : ObservableObject
                     // lastRun entry rather than the full history — the existing degradation path
                     // below, not a failure). raceConcurrency trades some of that last bit of
                     // capture completeness for a large, real speedup.
-                    var raceTasks = row.Meeting.Events.Select(async raceEvent =>
+                    var raceTasks = pendingEvents.Select(async raceEvent =>
                     {
                         await raceConcurrencyLimiter.WaitAsync(token);
                         try
@@ -694,6 +964,7 @@ public sealed partial class MainViewModel : ObservableObject
                         }
                     });
                     await Task.WhenAll(raceTasks);
+                }
 
                     // Generate this meeting's export file name once, so the S3 upload and the
                     // RabbitMQ event below both reference the exact same name (MeetingFileName uses
@@ -757,12 +1028,45 @@ public sealed partial class MainViewModel : ObservableObject
                         totalMeetingFolderCount += exportResult.MeetingFolderCount;
                         progress.Report($"[P-{discipline.Code()}] Exported {row.MeetingName}: {exportResult.FileCount} file(s).");
                     }
+                // Uploaded to S3 independently of the local folder export below (same idea as
+                // the Web version's ScrapeSessionService) — so S3 delivery doesn't depend on
+                // a download folder being configured at all. forceUploadToS3 is what lets
+                // auto-scrape always push to the bucket regardless of the manual "Also upload
+                // to S3" checkbox's current state. Guarded by UploadedToS3 so a resumed run
+                // never uploads the same meeting twice.
+                if ((UploadToS3 || forceUploadToS3) && !row.UploadedToS3)
+                {
+                    var (uploaded, failed) = await UploadMeetingToS3Async(discipline, row.Group, row.Meeting);
+                    totalS3UploadedCount += uploaded;
+                    totalS3FailedCount += failed;
+                    row.UploadedToS3 = true;
+                    progress.Report(
+                        $"[P-{discipline.Code()}] Uploaded {row.MeetingName} to S3: {uploaded} file(s)." +
+                        (failed > 0 ? $" {failed} failed." : ""));
+                }
+
+                // Export this meeting right away instead of waiting for every other
+                // meeting/discipline in this run to finish scraping too — so a long
+                // multi-meeting scrape has already saved each meeting as soon as it's ready,
+                // rather than losing everything scraped so far if the run is interrupted or
+                // fails partway through. S3 upload is handled above, not here — passing
+                // uploadToS3: false avoids uploading the same file twice. Guarded by
+                // ExportedLocally so a resumed run never exports the same meeting twice.
+                if (AutoExportAfterScrape && !string.IsNullOrWhiteSpace(DownloadFolder) && !row.ExportedLocally)
+                {
+                    var exportResult = await ExportMeetingAsync(discipline, row.Group, row.Meeting, DownloadFolder, uploadToS3: false);
+                    totalFileCount += exportResult.FileCount;
+                    totalMeetingFolderCount += exportResult.MeetingFolderCount;
+                    row.ExportedLocally = true;
+                    progress.Report($"[P-{discipline.Code()}] Exported {row.MeetingName}: {exportResult.FileCount} file(s).");
                 }
             }
 
             if (_lastResults.Count > 0)
             {
-                StatusText = $"Done. {Meetings.Count} meeting(s) loaded from {dates.Count} date(s) / {disciplines.Count} discipline(s), " +
+                var totalDateCount = requests.SelectMany(r => r.Dates).Distinct().Count();
+                var totalDisciplineCount = requests.SelectMany(r => r.Disciplines).Distinct().Count();
+                StatusText = $"Done. {Meetings.Count} meeting(s) loaded from {totalDateCount} date(s) / {totalDisciplineCount} discipline(s), " +
                              $"{_raceDetails.Count} race(s) with full runner detail.";
                 SystemSounds.Asterisk.Play();
 
@@ -809,8 +1113,10 @@ public sealed partial class MainViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
+            _canResume = true;
             StatusText = $"Stopped by user. {Meetings.Count} meeting(s) loaded, " +
-                          $"{_raceDetails.Count} race(s) with full runner detail before stopping.";
+                          $"{_raceDetails.Count} race(s) with full runner detail before stopping. " +
+                          "Click Continue to pick up where it left off.";
         }
         catch (Exception ex)
         {

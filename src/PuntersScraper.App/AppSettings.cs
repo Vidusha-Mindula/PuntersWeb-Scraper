@@ -34,15 +34,16 @@ public sealed class AppSettings
     // duplicate work. Turn it on deliberately on only one machine via the "Enabled" checkbox. ---
     public bool AutoScrapeEnabled { get; set; }
 
-    /// <summary>Comma-separated 24h "HH:mm" times, e.g. "06:00,18:00" — fires once per listed time
-    /// each day, so multiple daily runs are just multiple entries here.</summary>
-    public string AutoScrapeTimesOfDay { get; set; } = "06:00,18:00";
-    public bool AutoScrapeIncludeToday { get; set; } = true;
-    public bool AutoScrapeIncludeTomorrow { get; set; } = true;
-    public bool AutoScrapeIncludeDayAfterTomorrow { get; set; } = true;
-    public bool AutoScrapeHorses { get; set; } = true;
-    public bool AutoScrapeGreyhounds { get; set; } = true;
-    public bool AutoScrapeHarness { get; set; } = true;
+    /// <summary>One entry per scheduled time — each with independent Australia and International
+    /// day(s)/discipline(s) selections (either can be disabled), so e.g. a single 13:50 slot can
+    /// scrape Australia-only Harness for Today while ALSO scraping International Harness for
+    /// Today, in the same run. Fires once per slot whose time matches, each day (see
+    /// MainViewModel.AutoScrapeTickAsync).</summary>
+    public List<AutoScrapeSlot> AutoScrapeSlots { get; set; } = new()
+    {
+        new AutoScrapeSlot { Time = "06:00" },
+        new AutoScrapeSlot { Time = "18:00" },
+    };
 
     public DateTime? AutoScrapeLastRunUtc { get; set; }
     public string AutoScrapeLastRunSummary { get; set; } = "";
