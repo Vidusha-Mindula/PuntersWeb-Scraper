@@ -20,7 +20,7 @@ public sealed class AppSettings
     // they're saved locally and never checked into source control.
     public string S3AccessKey { get; set; } = "";
     public string S3SecretKey { get; set; } = "";
-    public string S3BucketName { get; set; } = "troyen-gen-prod";
+    public string S3BucketName { get; set; } = "queue";
     public string S3Folder { get; set; } = "pending";
 
     /// <summary>Id of the last developer notice (see DeveloperNoticeChecker) the user explicitly
@@ -53,6 +53,42 @@ public sealed class AppSettings
     /// human-readable settings.json. Defaults to Chrome, the only one these bot-detection
     /// workarounds have actually been tested against.</summary>
     public string ScraperBrowser { get; set; } = "Chrome";
+
+    // --- RabbitMQ "meeting.scraped" event publishing (see RabbitMqMeetingEventPublisher). Off by
+    // default (opt-in) so existing installs behave exactly as before until real connection details
+    // are entered. Flat properties, matching this class's existing style (no nested config
+    // sections). Like the S3 credentials above, these are reset to these baked-in defaults on every
+    // installer update — re-enter host/credentials after an update if you rely on this. ---
+
+    /// <summary>Master switch: when false, no events are published and the scrape path is
+    /// untouched. Turn on deliberately on the machine that should notify downstream systems.</summary>
+    public bool RabbitMqEnabled { get; set; } = true;
+
+    public string RabbitMqHostName { get; set; } = "62.171.228.224";
+    public int RabbitMqPort { get; set; } = 5672;
+    public string RabbitMqVirtualHost { get; set; } = "/";
+
+    // guest/guest only works over a localhost connection — it's RabbitMQ's well-known local
+    // default, not a real credential, so shipping it as the default is safe and lets local testing
+    // work out of the box. Point at real credentials for anything beyond a local broker.
+    public string RabbitMqUserName { get; set; } = "troyen";
+    public string RabbitMqPassword { get; set; } = "Abcd123";
+
+    /// <summary>Shared topic exchange every scraper publishes into. Configurable so ops can point
+    /// this at whatever the priority-control project actually expects without a code change.</summary>
+    public string RabbitMqExchangeName { get; set; } = "td.scrapers.events";
+
+    /// <summary>Routing-key template; "{source}" and "{disciplineCode}" (lowercased) are filled per
+    /// event, e.g. "punters.meeting.scraped.t".</summary>
+    public string RabbitMqRoutingKeyTemplate { get; set; } = "{source}.meeting.scraped.{disciplineCode}";
+
+    /// <summary>Lowercase scraper token used in the routing key (distinct from the payload's
+    /// "PuntersScraper" source, which names the project).</summary>
+    public string RabbitMqSource { get; set; } = "punters";
+
+    /// <summary>Priority (0–10 scale) stamped on every message. This app never sets any other
+    /// value — re-prioritization is the priority-control project's job.</summary>
+    public int RabbitMqDefaultPriority { get; set; } = 5;
 
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
