@@ -8,6 +8,7 @@ using CommunityToolkit.Mvvm.Input;
 using PuntersScraper.App.Services;
 using PuntersScraper.Core.Scraping;
 using PuntersScraper.Shared.Json;
+using PuntersScraper.Shared.Messaging;
 using PuntersScraper.Shared.Models;
 using PuntersScraper.Shared.Scraping;
 
@@ -21,6 +22,12 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly Dictionary<string, RaceDetail> _raceDetails = new();
 
     private readonly AppSettings _settings = AppSettings.Load();
+
+    /// <summary>Publishes one "meeting.scraped" event per finished meeting (see the publish hook in
+    /// <see cref="ScrapeDatesAsync"/>). One long-lived instance, next to <see cref="_settings"/>,
+    /// disposed on app exit via <see cref="DisposeEventPublisherAsync"/> from App.OnExit.</summary>
+    private readonly RabbitMqMeetingEventPublisher _eventPublisher;
+
     private bool _loadingSettings;
 
     private UpdateInfo? _pendingUpdate;
@@ -62,6 +69,8 @@ public sealed partial class MainViewModel : ObservableObject
 
     public MainViewModel()
     {
+        _eventPublisher = new RabbitMqMeetingEventPublisher(_settings);
+
         _loadingSettings = true;
         DownloadFolder = _settings.DownloadFolder;
         AutoExportAfterScrape = _settings.AutoExportAfterScrape;
@@ -536,6 +545,10 @@ public sealed partial class MainViewModel : ObservableObject
         _settings.Save();
     }
 
+    /// <summary>Closes the RabbitMQ connection on shutdown — called from App.OnExit. Bounded by a
+    /// short timeout inside the publisher so exit never hangs on an unreachable broker.</summary>
+    public ValueTask DisposeEventPublisherAsync() => _eventPublisher.DisposeAsync();
+
     // Only persist on the transition to true — RadioButtons sharing a GroupName also fire the
     // sibling's changed handler with false at the same time (as the framework unchecks it), and
     // reacting to that false transition too would just mean whichever handler happens to run
@@ -803,6 +816,13 @@ public sealed partial class MainViewModel : ObservableObject
         var totalS3UploadedCount = 0;
         var totalS3FailedCount = 0;
 
+        // Per-meeting RabbitMQ event publishing (independent, non-fatal notification path — see the
+        // publish call in the race-detail loop below). One correlation id is shared by every
+        // meeting event from this single scrape run.
+        var totalEventsPublishedCount = 0;
+        var totalEventsFailedCount = 0;
+        var eventCorrelationId = Guid.NewGuid();
+
         // How many races' tabs run at once within a meeting — see the comment on the race loop
         // below for why this can be >1 at all now, and why it isn't unbounded.
         const int RaceConcurrency = 3;
@@ -814,7 +834,8 @@ public sealed partial class MainViewModel : ObservableObject
         // separate "done" list, so it works identically whether this is a fresh run or a resume.
         bool RowNeedsUploadOrExport(MeetingRow r) =>
             ((UploadToS3 || forceUploadToS3) && !r.UploadedToS3) ||
-            (AutoExportAfterScrape && !string.IsNullOrWhiteSpace(DownloadFolder) && !r.ExportedLocally);
+            (AutoExportAfterScrape && !string.IsNullOrWhiteSpace(DownloadFolder) && !r.ExportedLocally) ||
+            (_settings.RabbitMqEnabled && !r.EventPublished);
         bool RowIsFullyDone(MeetingRow r) =>
             r.Meeting.Events.All(e => e.Id is not null && _raceDetails.ContainsKey(e.Id)) && !RowNeedsUploadOrExport(r);
 
@@ -946,6 +967,20 @@ public sealed partial class MainViewModel : ObservableObject
                     await Task.WhenAll(raceTasks);
                 }
 
+                // Generate this meeting's export file name once (and keep it on the row), so the
+                // S3 upload and the RabbitMQ event below both reference the exact same name —
+                // MeetingFileName uses DateTime.Now, so regenerating it would drift by a second
+                // and the event's meetingFileName wouldn't match the file that was actually
+                // uploaded, including when a Stop/resume lands between the two steps.
+                var meetingFileName = row.MeetingFileName ??= MeetingFileName(discipline);
+
+                // The slug every one of this meeting's S3 objects is prefixed with — computed
+                // the same way UploadMeetingToS3Async/ExportMeetingAsync do (deterministic for a
+                // given meeting), so the event's meetingSlug matches the actual bucket prefix.
+                // Carried in the event because it can't be reconstructed from the meeting name
+                // alone (Punters' slug includes the date, e.g. "swan-hill-20260922").
+                var meetingSlug = Slugify(row.Meeting.Slug ?? row.Meeting.Name ?? row.Meeting.Id ?? "meeting");
+
                 // Uploaded to S3 independently of the local folder export below (same idea as
                 // the Web version's ScrapeSessionService) — so S3 delivery doesn't depend on
                 // a download folder being configured at all. forceUploadToS3 is what lets
@@ -954,13 +989,37 @@ public sealed partial class MainViewModel : ObservableObject
                 // never uploads the same meeting twice.
                 if ((UploadToS3 || forceUploadToS3) && !row.UploadedToS3)
                 {
-                    var (uploaded, failed) = await UploadMeetingToS3Async(discipline, row.Group, row.Meeting);
+                    var (uploaded, failed) = await UploadMeetingToS3Async(discipline, row.Group, row.Meeting, meetingFileName);
                     totalS3UploadedCount += uploaded;
                     totalS3FailedCount += failed;
                     row.UploadedToS3 = true;
                     progress.Report(
                         $"[P-{discipline.Code()}] Uploaded {row.MeetingName} to S3: {uploaded} file(s)." +
                         (failed > 0 ? $" {failed} failed." : ""));
+                }
+
+                // Publish a "meeting.scraped" event as soon as this meeting is ready — a
+                // parallel, lightweight notification alongside the S3 upload above, never a
+                // replacement for it. Only the live per-meeting scrape path publishes; the
+                // manual "Export JSON..." path (ExportMeetingAsync) deliberately does not, so
+                // re-exporting already-scraped results never re-fires the event. Non-fatal by
+                // contract: the publisher never throws, so a broker outage only bumps the
+                // failed count and is surfaced in the status text — the scrape is unaffected.
+                // Guarded by EventPublished so a resumed run never re-publishes; it's set even
+                // on failure (like UploadedToS3), otherwise the row would never count as done.
+                if (_settings.RabbitMqEnabled && !row.EventPublished)
+                {
+                    // Carry the full S3 object base name (slug-prefixed), matching the uploaded
+                    // file exactly — e.g. "swan-hill-20260922-TR-2026-09-22-11-42-50-meeting.json".
+                    // The upload above still gets the bare name; it prepends the slug itself.
+                    var meetingObjectName = $"{meetingSlug}-{meetingFileName}";
+                    var evt = MeetingScrapedEvent.Create(
+                        discipline, row.Meeting, eventCorrelationId, _settings.RabbitMqDefaultPriority, meetingObjectName, meetingSlug);
+                    if (await _eventPublisher.PublishMeetingScrapedAsync(evt, progress, token))
+                        totalEventsPublishedCount++;
+                    else
+                        totalEventsFailedCount++;
+                    row.EventPublished = true;
                 }
 
                 // Export this meeting right away instead of waiting for every other
@@ -996,6 +1055,13 @@ public sealed partial class MainViewModel : ObservableObject
                     StatusText += totalS3FailedCount > 0
                         ? $" Uploaded {totalS3UploadedCount} file(s) to S3 ({totalS3FailedCount} failed — see above)."
                         : $" Uploaded {totalS3UploadedCount} file(s) to S3.";
+                }
+
+                if (_settings.RabbitMqEnabled)
+                {
+                    StatusText += totalEventsFailedCount > 0
+                        ? $" Published {totalEventsPublishedCount} RabbitMQ event(s) ({totalEventsFailedCount} failed — see above)."
+                        : $" Published {totalEventsPublishedCount} RabbitMQ event(s).";
                 }
 
                 if (AutoExportAfterScrape)
@@ -1219,7 +1285,7 @@ public sealed partial class MainViewModel : ObservableObject
     /// directly from <see cref="ScrapeDatesAsync"/> as soon as each meeting's races finish,
     /// independent of local folder export, mirroring the Web version's
     /// ScrapeSessionService.UploadMeetingToS3Async.</summary>
-    private async Task<(int uploaded, int failed)> UploadMeetingToS3Async(Discipline discipline, string group, Meeting meeting)
+    private async Task<(int uploaded, int failed)> UploadMeetingToS3Async(Discipline discipline, string group, Meeting meeting, string meetingFileName)
     {
         var meetingFolderName = Slugify(meeting.Slug ?? meeting.Name ?? meeting.Id ?? "meeting");
         var uploaded = 0;
@@ -1236,7 +1302,7 @@ public sealed partial class MainViewModel : ObservableObject
             }
         };
 
-        var (u, f) = await UploadJsonToS3Async(meetingFolderName, MeetingFileName(discipline), meetingPayload);
+        var (u, f) = await UploadJsonToS3Async(meetingFolderName, meetingFileName, meetingPayload);
         uploaded += u; failed += f;
 
         foreach (var raceEvent in meeting.Events)
