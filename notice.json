@@ -1,5 +1,5 @@
-{
-    "id":  "20260925155932",
-    "title":  "v3.16.2 is out",
-    "message":  "Added Turkey, Spain, Mexico, and Panama to the manual Scraper tab's country picker. Please keep the app updated to the latest version."
+﻿{
+    "id":  "20260928123702",
+    "title":  "v3.17.0 is out",
+    "message":  "Added RabbitMQ meeting events and per-meeting publish/upload state. Please keep the app updated to the latest version."
 }
