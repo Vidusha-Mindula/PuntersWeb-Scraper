@@ -1,5 +1,5 @@
 ﻿{
-    "id":  "20260928123702",
-    "title":  "v3.17.0 is out",
-    "message":  "Added RabbitMQ meeting events and per-meeting publish/upload state. Please keep the app updated to the latest version."
+    "id":  "20260928220009",
+    "title":  "v3.17.1 is out",
+    "message":  "Fixed a scraper bug: Punters does not render a date tab for every day (some midweek days have no tab at all), and scraping one of those days used to either crash or silently miss real meetings, including international meetings like New Zealand. It now falls back correctly and picks up everything. Please keep the app updated to the latest version."
 }
