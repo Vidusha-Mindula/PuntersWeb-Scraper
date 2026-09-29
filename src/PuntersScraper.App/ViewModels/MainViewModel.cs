@@ -854,6 +854,21 @@ public sealed partial class MainViewModel : ObservableObject
             // filter to that one result rather than fetching it again. A combo already fetched on
             // an earlier attempt (isResume, tracked via _lastResults) is skipped rather than
             // re-fetched.
+            // Guards against the same real-world meeting being listed twice within one run.
+            // Punters' date-tab payloads aren't strictly scoped to the requested day — a tab can
+            // include some meetings actually dated an adjacent day (confirmed live: the "Thursday"
+            // tab's data included a handful of the previous day's meetings) — so two different
+            // date sub-requests in the same run (e.g. International's "Tomorrow" and "Day after
+            // tomorrow", both commonly enabled together) can each legitimately list the very same
+            // meeting. Without this, the second occurrence sat in the grid forever stuck at 0
+            // races/0% detail: Phase 2 below treats a row as already done once every one of its
+            // races is in the shared _raceDetails cache (keyed by race id, which the duplicate
+            // shares with the original), so it was silently skipped rather than actually
+            // processed, and its own RacesWithDetail counter never got the chance to increment.
+            // Seeded from whatever's already in Meetings so this also holds across a resume.
+            var addedMeetingIds = new HashSet<(Discipline Discipline, string Id)>(
+                Meetings.Where(r => r.Meeting.Id is not null).Select(r => (r.DisciplineEnum, r.Meeting.Id!)));
+
             var uniqueCombos = requests
                 .SelectMany(r => r.Dates.SelectMany(date => r.Disciplines.Select(discipline => (date, discipline))))
                 .Distinct();
@@ -884,8 +899,13 @@ public sealed partial class MainViewModel : ObservableObject
 
                         foreach (var meeting in group.Meetings.Where(m => MatchesFilters(m, countryFilter, courseFilter)))
                         {
-                            Meetings.Add(MeetingRow.From(discipline, group.Group ?? "", meeting, date));
                             addedAny = true;
+                            if (meeting.Id is not null && !addedMeetingIds.Add((discipline, meeting.Id)))
+                            {
+                                continue; // already listed under a different date this run
+                            }
+
+                            Meetings.Add(MeetingRow.From(discipline, group.Group ?? "", meeting, date));
                         }
                     }
 
