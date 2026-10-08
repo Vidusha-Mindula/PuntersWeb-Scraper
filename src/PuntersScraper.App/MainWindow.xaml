@@ -181,12 +181,22 @@
                                 <CheckBox Content="Auto-export JSON after scrape" IsChecked="{Binding AutoExportAfterScrape}" VerticalAlignment="Center" Margin="0,0,24,0"
                                           ToolTip="When checked, a successful scrape immediately saves JSON to the download folder above — no prompt. Requires a download folder to be set." />
 
-                                <CheckBox Content="Also upload to S3 (pending)" IsChecked="{Binding UploadToS3}" VerticalAlignment="Center" Margin="0,0,10,0"
-                                          ToolTip="When checked, every exported file is also uploaded directly into the configured bucket's pending folder — flat, no per-meeting nesting there (local files keep their per-meeting folders as usual)." />
-
-                                <TextBlock Text="Bucket" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
-                                <TextBox Text="{Binding S3BucketName, UpdateSourceTrigger=PropertyChanged}" Width="180"
-                                         ToolTip="S3 bucket name to upload to. Remembered across app restarts. Access/secret keys are configured on the Bucket tab." />
+                                <!-- Dev/Prod delivery environment: picks the S3 bucket (Dev "got" / Prod "queue")
+                                     and the RabbitMQ broker together. Locked while a scrape runs. -->
+                                <TextBlock Text="Environment" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,10,0" />
+                                <RadioButton GroupName="TargetEnvironment" Content="Prod" IsChecked="{Binding UseProdEnvironment}" IsEnabled="{Binding CanSwitchEnvironment}"
+                                             VerticalAlignment="Center" Margin="0,0,16,0"
+                                             ToolTip="Production (default): scraped files upload to the 'queue' bucket and RabbitMQ events go to the production broker." />
+                                <RadioButton GroupName="TargetEnvironment" Content="Dev" IsChecked="{Binding UseDevEnvironment}" IsEnabled="{Binding CanSwitchEnvironment}"
+                                             VerticalAlignment="Center" Margin="0,0,16,0"
+                                             ToolTip="Development: scraped files upload to the 'got' bucket and RabbitMQ events go to the development broker." />
+                                <RadioButton GroupName="TargetEnvironment" Content="Custom" IsChecked="{Binding UseCustomEnvironment}" IsEnabled="{Binding CanSwitchEnvironment}"
+                                             VerticalAlignment="Center" Margin="0,0,10,0"
+                                             ToolTip="Custom: scraped files upload to the bucket you type in. No RabbitMQ events are sent." />
+                                <TextBox Text="{Binding CustomBucketName, UpdateSourceTrigger=PropertyChanged}" Width="180"
+                                         IsEnabled="{Binding CanSwitchEnvironment}"
+                                         Visibility="{Binding UseCustomEnvironment, Converter={StaticResource BoolToVisibility}}"
+                                         ToolTip="Bucket name to upload scraped files into. Remembered across app restarts. No RabbitMQ events are sent in Custom mode." />
                             </StackPanel>
                         </StackPanel>
                     </Border>

@@ -56,14 +56,29 @@ After each meeting finishes scraping, publish one `meeting.scraped` event contai
   "disciplineCode": "T",
   "meetingId": "12345",
   "meetingName": "Flemington",
+  "meetingFileName": "flemington-20260905-TR-2026-09-05-11-42-50-meeting.json",
+  "meetingSlug": "flemington-20260905",
   "meetingDateLocal": "2026-09-05",
   "meetingDateUtc": "2026-09-04T14:00:00Z",
   "venueState": "VIC",
   "venueCountry": "AUS",
   "raceCount": 8,
-  "correlationId": "guid shared by every meeting from the same scrape run"
+  "correlationId": "guid shared by every meeting from the same scrape run",
+  "machineGuid": "0b5c4a2e-1f3d-4e6a-9b8c-7d2e1f0a3b4c",
+  "machineName": "RACE-PC-01",
+  "userName": "scraper",
+  "applicationVersion": "3.18.0"
 }
 ```
+
+**Producer identity fields** (added to v1 additively — optional, `null` if the producer couldn't determine them; every other field is unchanged, so `schemaVersion` stays `1`). They identify which PC, Windows user and scraper build published the event, and are populated automatically by the desktop app (`PuntersScraper.App.Services.MachineIdentity`) — no configuration or machine-registration service involved:
+
+| Field | Source |
+|---|---|
+| `machineGuid` | Windows `MachineGuid` from `HKLM\SOFTWARE\Microsoft\Cryptography` (64-bit registry view). Stable per Windows install — group/identify machines by this, not by name. |
+| `machineName` | Windows computer name (`Environment.MachineName`). |
+| `userName` | Windows user name running the app (`Environment.UserName`, no domain). |
+| `applicationVersion` | The scraper build, e.g. `3.18.0` (`dev` for an unversioned local build). |
 
 Map `discipline`/`disciplineCode` from the existing `Discipline` enum and its `Code()` extension in `PuntersScraper.Shared/Models/Discipline.cs` — don't invent a second code scheme. Pull the rest from the `Meeting`/`MeetingRow` already available at the hook point.
 

@@ -31,14 +31,29 @@ Publish the exact same `meeting.scraped` event, into the exact same shared queue
   "disciplineCode": "T",
   "meetingId": "12345",
   "meetingName": "Flemington",
+  "meetingFileName": "flemington-20260905-TR-2026-09-05-11-42-50-meeting.json",
+  "meetingSlug": "flemington-20260905",
   "meetingDateLocal": "2026-09-05",
   "meetingDateUtc": "2026-09-04T14:00:00Z",
   "venueState": "VIC",
   "venueCountry": "AUS",
   "raceCount": 8,
-  "correlationId": "guid shared by every meeting from the same scrape run"
+  "correlationId": "guid shared by every meeting from the same scrape run",
+  "machineGuid": "0b5c4a2e-1f3d-4e6a-9b8c-7d2e1f0a3b4c",
+  "machineName": "RACE-PC-01",
+  "userName": "scraper",
+  "applicationVersion": "3.18.0"
 }
 ```
+
+**Producer identity fields** (added to v1 additively — optional, `null` if the producer couldn't determine them; every other field is unchanged, so `schemaVersion` stays `1`). They identify which PC, Windows user and scraper build published the event, and are populated automatically by the desktop app (`PuntersScraper.App.Services.MachineIdentity`) — no configuration or machine-registration service involved:
+
+| Field | Source |
+|---|---|
+| `machineGuid` | Windows `MachineGuid` from `HKLM\SOFTWARE\Microsoft\Cryptography` (64-bit registry view). Stable per Windows install — group/identify machines by this, not by name. |
+| `machineName` | Windows computer name (`Environment.MachineName`). |
+| `userName` | Windows user name running the app (`Environment.UserName`, no domain). |
+| `applicationVersion` | The scraper build, e.g. `3.18.0` (`dev` for an unversioned local build). |
 
 `source` stays `"PuntersScraper"` for both App and Web — it identifies the *scraper project*, not the front-end. Don't add a field to distinguish desktop vs. web unless you decide it's genuinely needed (see "Open questions").
 
@@ -75,4 +90,4 @@ Publish the exact same `meeting.scraped` event, into the exact same shared queue
 ## Open questions — surface these back to me, don't silently guess
 
 - Same exchange/routing-key naming and production-credential-source questions as the Web task apply here too — don't re-decide them independently; use whatever was confirmed there, since both projects publish into the same broker.
-- Whether it's worth tagging events with which front-end produced them (an optional `producer: "web" | "desktop"` field) for observability, given both App and Web can independently scrape the same meeting on the same machine/network — flagging this as a nice-to-have, not adding it unilaterally, since it changes the shared schema both projects depend on.
+- Whether it's worth tagging events with which front-end produced them (an optional `producer: "web" | "desktop"` field) for observability, given both App and Web can independently scrape the same meeting on the same machine/network — flagging this as a nice-to-have, not adding it unilaterally, since it changes the shared schema both projects depend on. *(Resolved: events now carry the producer identity fields `machineGuid`, `machineName`, `userName` and `applicationVersion` — see the schema above — which identify the publishing PC, user and build.)*

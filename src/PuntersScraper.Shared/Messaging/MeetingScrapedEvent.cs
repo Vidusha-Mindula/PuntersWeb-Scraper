@@ -63,14 +63,40 @@ public sealed record MeetingScrapedEvent
     /// <summary>Shared by every meeting event from the same scrape run.</summary>
     public string? CorrelationId { get; init; }
 
+    // --- Producer identity: which PC, Windows user and scraper build published this event. Added
+    // to schema v1 additively (optional fields, existing ones untouched), so consumers that ignore
+    // unknown fields keep working. All are null when the producer couldn't determine them. ---
+
+    /// <summary>The producing PC's Windows <c>MachineGuid</c>
+    /// (<c>HKLM\SOFTWARE\Microsoft\Cryptography</c>) — stable per Windows install, unlike the
+    /// computer name, so it's the value to group/identify machines by.</summary>
+    public string? MachineGuid { get; init; }
+
+    /// <summary>The producing PC's Windows computer name, for human readability.</summary>
+    public string? MachineName { get; init; }
+
+    /// <summary>The Windows user running the scraper (user name only, no domain).</summary>
+    public string? UserName { get; init; }
+
+    /// <summary>The scraper build that published this event, e.g. "3.18.0" ("dev" for a local
+    /// build without a version).</summary>
+    public string? ApplicationVersion { get; init; }
+
     /// <summary>Builds an event from a scraped <paramref name="meeting"/> and its
     /// <paramref name="discipline"/>. <paramref name="correlationId"/> is scoped to one scrape run
     /// (every meeting in that run shares it); <paramref name="priority"/> is the configured default
-    /// (5) — this contract never re-prioritizes after the fact.</summary>
+    /// (5) — this contract never re-prioritizes after the fact. <paramref name="producer"/> stamps
+    /// the machine/user/version identity fields; it's resolved by the front-end since this project
+    /// has no access to Windows-specific APIs.</summary>
     public static MeetingScrapedEvent Create(
         Discipline discipline, Meeting meeting, Guid correlationId, int priority = 5,
-        string? meetingFileName = null, string? meetingSlug = null) => new()
+        string? meetingFileName = null, string? meetingSlug = null,
+        ProducerIdentity? producer = null) => new()
     {
+        MachineGuid = producer?.MachineGuid,
+        MachineName = producer?.MachineName,
+        UserName = producer?.UserName,
+        ApplicationVersion = producer?.ApplicationVersion,
         Priority = priority,
         Discipline = discipline.ToString(),
         DisciplineCode = discipline.Code(),
