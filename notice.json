@@ -1,5 +1,5 @@
 ﻿{
-    "id":  "20261008115217",
-    "title":  "v3.18.0 is out",
-    "message":  "Scraper now has a Prod/Dev/Custom environment toggle (default Prod) in place of the S3 checkbox. Every scrape uploads to the selected bucket; Custom uploads to a bucket you name and sends no RabbitMQ events. Please update to the latest version."
+    "id":  "20261008121729",
+    "title":  "v3.18.1 is out",
+    "message":  "Please update now. v3.18.0 was missing S3 credentials, so uploads may fail on that version. v3.18.1 restores them and includes the new Prod/Dev/Custom environment toggle (default Prod)."
 }
