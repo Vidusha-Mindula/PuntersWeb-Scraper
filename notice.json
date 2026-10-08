@@ -1,5 +1,5 @@
 ﻿{
-    "id":  "20260929120411",
-    "title":  "v3.17.2 is out",
-    "message":  "Fixed a bug where scraping two overlapping dates in one run (e.g. Auto Scraper\u0027s Tomorrow + Day after tomorrow together) could list the same real meeting twice, with the duplicate stuck at 0 races/0% detail forever. Meetings are now deduplicated across dates within a run. Please keep the app updated to the latest version."
+    "id":  "20261008115217",
+    "title":  "v3.18.0 is out",
+    "message":  "Scraper now has a Prod/Dev/Custom environment toggle (default Prod) in place of the S3 checkbox. Every scrape uploads to the selected bucket; Custom uploads to a bucket you name and sends no RabbitMQ events. Please update to the latest version."
 }
