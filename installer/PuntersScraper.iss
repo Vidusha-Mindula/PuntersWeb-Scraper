@@ -80,9 +80,10 @@ begin
   if not DirExists(SettingsDir) then
     ForceDirectories(SettingsDir);
 
-  Json := '{"DownloadFolder":"","AutoExportAfterScrape":false,"UploadToS3":false,' +
+  // No bucket/RabbitMQ host here: both are derived from TargetEnvironment in AppSettings.cs.
+  Json := '{"DownloadFolder":"","AutoExportAfterScrape":false,"TargetEnvironment":"Prod",' +
     '"S3Endpoint":"https://s3.troyendata.com","S3AccessKey":"{#S3AccessKey}",' +
-    '"S3SecretKey":"{#S3SecretKey}","S3BucketName":"troyen-gen-prod","S3Folder":"pending"}';
+    '"S3SecretKey":"{#S3SecretKey}","S3Folder":"pending"}';
 
   SaveStringToFile(SettingsPath, Json, False);
 end;

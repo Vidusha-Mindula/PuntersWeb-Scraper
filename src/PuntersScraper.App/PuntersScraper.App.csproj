@@ -35,4 +35,8 @@
     <Resource Include="app.ico" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="PuntersScraper.Tests" />
+  </ItemGroup>
+
 </Project>

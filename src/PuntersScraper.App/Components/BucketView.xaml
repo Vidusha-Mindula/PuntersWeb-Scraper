@@ -41,7 +41,7 @@
         <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10" VerticalAlignment="Center">
             <Button Content="Refresh" Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding RefreshCommand}" Margin="0,0,10,0" />
             <Button Content="Upload..." Width="100" Style="{StaticResource SecondaryButton}" Click="Upload_Click" Margin="0,0,16,0"
-                    ToolTip="Upload one or more local files into the 'pending' folder — always there, regardless of the Bucket field on the Scraper tab, so uploads land somewhere predictable." />
+                    ToolTip="Upload one or more local files into the 'pending' folder — always there, in the bucket of the environment selected on the Scraper tab (Prod 'queue' / Dev 'got' / Custom: your typed bucket)." />
             <Button Content="Select All" Width="100" Style="{StaticResource SecondaryButton}" Command="{Binding SelectAllCommand}" Margin="0,0,10,0" />
             <Button Content="Clear Selection" Width="120" Style="{StaticResource SecondaryButton}" Command="{Binding ClearSelectionCommand}" Margin="0,0,10,0" />
             <Button Content="{Binding DeleteSelectedLabel}" Width="150" Click="DeleteSelected_Click"

@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace PuntersScraper.App;
 
@@ -12,7 +13,18 @@ public sealed class AppSettings
     public string DownloadFolder { get; set; } = "";
     public bool AutoExportAfterScrape { get; set; }
 
-    public bool UploadToS3 { get; set; }
+    /// <summary>Which environment scrapes are delivered to — picks both the S3 bucket
+    /// (<see cref="S3BucketName"/>) and the RabbitMQ broker (<see cref="RabbitMqHostName"/>)
+    /// together, so the two can never point at different environments. Switched via the
+    /// Prod/Dev/Custom toggle on the Scraper tab; Prod by default. Custom uploads into
+    /// <see cref="CustomS3BucketName"/> and never publishes to RabbitMQ.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public TargetEnvironment TargetEnvironment { get; set; } = TargetEnvironment.Prod;
+
+    /// <summary>Bucket name typed in for <see cref="TargetEnvironment.Custom"/>. Remembered across
+    /// restarts so switching back to Custom restores it.</summary>
+    public string CustomS3BucketName { get; set; } = "";
+
     public string S3Endpoint { get; set; } = "https://s3.troyendata.com";
 
     // Deliberately no default access/secret key here (source is public) — set these via the
@@ -20,7 +32,17 @@ public sealed class AppSettings
     // they're saved locally and never checked into source control.
     public string S3AccessKey { get; set; } = "";
     public string S3SecretKey { get; set; } = "";
-    public string S3BucketName { get; set; } = "queue";
+
+    /// <summary>Derived from <see cref="TargetEnvironment"/> — not persisted, so a stale value in
+    /// an older settings.json (or the installer's defaults) can't override the environment.</summary>
+    [JsonIgnore]
+    public string S3BucketName => TargetEnvironment switch
+    {
+        TargetEnvironment.Dev => "got",
+        TargetEnvironment.Custom => CustomS3BucketName.Trim(),
+        _ => "queue",
+    };
+
     public string S3Folder { get; set; } = "pending";
 
     /// <summary>Id of the last developer notice (see DeveloperNoticeChecker) the user explicitly
@@ -64,7 +86,17 @@ public sealed class AppSettings
     /// untouched. Turn on deliberately on the machine that should notify downstream systems.</summary>
     public bool RabbitMqEnabled { get; set; } = true;
 
-    public string RabbitMqHostName { get; set; } = "62.171.228.224";
+    /// <summary>Whether scrapes actually publish events: <see cref="RabbitMqEnabled"/>, and never
+    /// for <see cref="TargetEnvironment.Custom"/> (an ad-hoc bucket has no consumer to notify).
+    /// Every publish path checks this rather than <see cref="RabbitMqEnabled"/> directly.</summary>
+    [JsonIgnore]
+    public bool PublishesToRabbitMq => RabbitMqEnabled && TargetEnvironment != TargetEnvironment.Custom;
+
+    /// <summary>Derived from <see cref="TargetEnvironment"/> — not persisted, same as
+    /// <see cref="S3BucketName"/>.</summary>
+    [JsonIgnore]
+    public string RabbitMqHostName => TargetEnvironment == TargetEnvironment.Dev ? "138.226.222.210" : "62.171.228.224";
+
     public int RabbitMqPort { get; set; } = 5672;
     public string RabbitMqVirtualHost { get; set; } = "/";
 
@@ -129,4 +161,15 @@ public sealed class AppSettings
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, JsonSerializer.Serialize(this));
     }
+}
+
+/// <summary>Delivery environment for scraped output — see <see cref="AppSettings.TargetEnvironment"/>.</summary>
+public enum TargetEnvironment
+{
+    Prod,
+    Dev,
+
+    /// <summary>User-entered bucket (<see cref="AppSettings.CustomS3BucketName"/>); S3 upload only,
+    /// no RabbitMQ events.</summary>
+    Custom,
 }

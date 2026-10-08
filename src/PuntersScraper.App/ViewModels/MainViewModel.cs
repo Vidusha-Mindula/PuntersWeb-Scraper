@@ -52,7 +52,7 @@ public sealed partial class MainViewModel : ObservableObject
     private sealed record ScrapeSubRequest(List<Discipline> Disciplines, List<DateOnly> Dates, string GroupFilter);
 
     private sealed record ScrapeRequest(
-        List<ScrapeSubRequest> SubRequests, string CountryFilter, string CourseFilter, bool ForceUploadToS3);
+        List<ScrapeSubRequest> SubRequests, string CountryFilter, string CourseFilter);
 
     /// <summary>Ticks on the UI thread (via WPF's Dispatcher) so its handler can safely touch
     /// <see cref="Meetings"/> and other bound properties directly, the same as a button click —
@@ -74,8 +74,10 @@ public sealed partial class MainViewModel : ObservableObject
         _loadingSettings = true;
         DownloadFolder = _settings.DownloadFolder;
         AutoExportAfterScrape = _settings.AutoExportAfterScrape;
-        UploadToS3 = _settings.UploadToS3;
-        S3BucketName = _settings.S3BucketName;
+        UseDevEnvironment = _settings.TargetEnvironment == TargetEnvironment.Dev;
+        UseCustomEnvironment = _settings.TargetEnvironment == TargetEnvironment.Custom;
+        UseProdEnvironment = !UseDevEnvironment && !UseCustomEnvironment;
+        CustomBucketName = _settings.CustomS3BucketName;
         AutoScrapeEnabled = _settings.AutoScrapeEnabled;
         foreach (var slot in _settings.AutoScrapeSlots)
         {
@@ -249,16 +251,28 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool autoExportAfterScrape;
 
-    /// <summary>When set, every exported file is also uploaded straight into the configured
-    /// S3 bucket/folder (flat — no per-meeting nesting there, unlike the local export).</summary>
+    // --- Prod/Dev/Custom environment toggle (Scraper tab). Picks where every scrape is delivered:
+    // the S3 bucket (Prod "queue" / Dev "got" / Custom: typed in) and the RabbitMQ broker (none for
+    // Custom) — see AppSettings.TargetEnvironment. Mutually-exclusive RadioButtons, same plain-bool
+    // pattern as the browser choice above. Every scraped meeting is always uploaded to the
+    // selected environment's bucket. ---
     [ObservableProperty]
-    private bool uploadToS3;
+    private bool useProdEnvironment = true;
 
-    /// <summary>S3 bucket to upload to when <see cref="UploadToS3"/> is set. Editable in the UI
-    /// rather than fixed at install time, so the same install can be pointed at different
-    /// buckets. Remembered across app restarts.</summary>
     [ObservableProperty]
-    private string s3BucketName = "";
+    private bool useDevEnvironment;
+
+    [ObservableProperty]
+    private bool useCustomEnvironment;
+
+    /// <summary>Bucket typed in for the Custom environment; the input is only shown while Custom
+    /// is selected.</summary>
+    [ObservableProperty]
+    private string customBucketName = "";
+
+    /// <summary>The toggle is locked while a scrape runs, so a single run can never deliver some
+    /// meetings to Dev and others to Prod.</summary>
+    public bool CanSwitchEnvironment => !IsBusy;
 
     /// <summary>When set, <see cref="AutoScrapeTickAsync"/> fires a scrape automatically at each
     /// slot in <see cref="AutoScrapeSlots"/> whose time matches, for as long as this app stays
@@ -438,6 +452,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     partial void OnIsBusyChanged(bool value)
     {
+        OnPropertyChanged(nameof(CanSwitchEnvironment));
         ScrapeCommand.NotifyCanExecuteChanged();
         ExportJsonCommand.NotifyCanExecuteChanged();
         StopCommand.NotifyCanExecuteChanged();
@@ -476,8 +491,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (_lastScrapeRequest is not { } request) return;
         await ScrapeDatesAsync(
-            request.SubRequests, request.CountryFilter, request.CourseFilter,
-            request.ForceUploadToS3, isResume: true);
+            request.SubRequests, request.CountryFilter, request.CourseFilter, isResume: true);
     }
 
     private bool CanContinue() => !IsBusy && _canResume && _lastScrapeRequest is not null;
@@ -531,17 +545,31 @@ public sealed partial class MainViewModel : ObservableObject
         _settings.Save();
     }
 
-    partial void OnUploadToS3Changed(bool value)
+    partial void OnUseProdEnvironmentChanged(bool value)
     {
-        if (_loadingSettings) return;
-        _settings.UploadToS3 = value;
+        if (_loadingSettings || !value) return;
+        _settings.TargetEnvironment = TargetEnvironment.Prod;
         _settings.Save();
     }
 
-    partial void OnS3BucketNameChanged(string value)
+    partial void OnUseDevEnvironmentChanged(bool value)
+    {
+        if (_loadingSettings || !value) return;
+        _settings.TargetEnvironment = TargetEnvironment.Dev;
+        _settings.Save();
+    }
+
+    partial void OnUseCustomEnvironmentChanged(bool value)
+    {
+        if (_loadingSettings || !value) return;
+        _settings.TargetEnvironment = TargetEnvironment.Custom;
+        _settings.Save();
+    }
+
+    partial void OnCustomBucketNameChanged(string value)
     {
         if (_loadingSettings) return;
-        _settings.S3BucketName = value;
+        _settings.CustomS3BucketName = value;
         _settings.Save();
     }
 
@@ -629,7 +657,7 @@ public sealed partial class MainViewModel : ObservableObject
 
         if (requests.Count == 0) return;
 
-        await ScrapeDatesAsync(requests, countryFilter: "", courseFilter: "", forceUploadToS3: true);
+        await ScrapeDatesAsync(requests, countryFilter: "", courseFilter: "");
 
         AutoScrapeLastRunSummary = $"[{string.Join(", ", firedLabels)}] {StatusText}";
         _settings.AutoScrapeLastRunUtc = DateTime.UtcNow;
@@ -773,21 +801,25 @@ public sealed partial class MainViewModel : ObservableObject
     /// so e.g. Australia's and International's meetings both show up together quickly rather than
     /// International only appearing once Australia's full race detail is already done.
     /// </summary>
-    /// <param name="forceUploadToS3">Auto-scrape always passes true here — its whole point is
-    /// unattended delivery into the bucket for TroyenRaceIngestor, so it uploads regardless of
-    /// whether the manual Scraper tab's "Also upload to S3" checkbox happens to be on.</param>
     /// <param name="isResume">True when called from <see cref="ContinueAsync"/> after a Stop —
     /// skips the usual "clear everything and start fresh" step, so meetings/races already
     /// captured (and this run's original request, in <see cref="_lastScrapeRequest"/>) survive
     /// into this call instead of being wiped.</param>
     private async Task ScrapeDatesAsync(
         List<ScrapeSubRequest> requests, string countryFilter, string courseFilter,
-        bool forceUploadToS3 = false, bool isResume = false)
+        bool isResume = false)
     {
         var browser = SelectedScraperBrowser;
         if (!ScraperBrowserAvailability.IsInstalled(browser))
         {
             StatusText = $"{browser} isn't available on this PC. {ScraperBrowserAvailability.InstallHint(browser)}";
+            return;
+        }
+
+        // Custom has no fallback bucket — refuse to start rather than fail every upload.
+        if (_settings.TargetEnvironment == TargetEnvironment.Custom && string.IsNullOrWhiteSpace(_settings.S3BucketName))
+        {
+            StatusText = "Custom environment selected — enter a bucket name before scraping.";
             return;
         }
 
@@ -801,7 +833,7 @@ public sealed partial class MainViewModel : ObservableObject
             Meetings.Clear();
             _lastResults.Clear();
             _raceDetails.Clear();
-            _lastScrapeRequest = new ScrapeRequest(requests, countryFilter, courseFilter, forceUploadToS3);
+            _lastScrapeRequest = new ScrapeRequest(requests, countryFilter, courseFilter);
         }
         _canResume = false;
         StatusText = isResume ? "Resuming..." : "Starting browser...";
@@ -833,9 +865,9 @@ public sealed partial class MainViewModel : ObservableObject
         // evaluated live off current checkbox state and _raceDetails/row flags rather than any
         // separate "done" list, so it works identically whether this is a fresh run or a resume.
         bool RowNeedsUploadOrExport(MeetingRow r) =>
-            ((UploadToS3 || forceUploadToS3) && !r.UploadedToS3) ||
+            !r.UploadedToS3 ||
             (AutoExportAfterScrape && !string.IsNullOrWhiteSpace(DownloadFolder) && !r.ExportedLocally) ||
-            (_settings.RabbitMqEnabled && !r.EventPublished);
+            (_settings.PublishesToRabbitMq && !r.EventPublished);
         bool RowIsFullyDone(MeetingRow r) =>
             r.Meeting.Events.All(e => e.Id is not null && _raceDetails.ContainsKey(e.Id)) && !RowNeedsUploadOrExport(r);
 
@@ -1003,11 +1035,10 @@ public sealed partial class MainViewModel : ObservableObject
 
                 // Uploaded to S3 independently of the local folder export below (same idea as
                 // the Web version's ScrapeSessionService) — so S3 delivery doesn't depend on
-                // a download folder being configured at all. forceUploadToS3 is what lets
-                // auto-scrape always push to the bucket regardless of the manual "Also upload
-                // to S3" checkbox's current state. Guarded by UploadedToS3 so a resumed run
-                // never uploads the same meeting twice.
-                if ((UploadToS3 || forceUploadToS3) && !row.UploadedToS3)
+                // a download folder being configured at all. Always on — every meeting goes to
+                // the selected environment's bucket (see the Dev/Prod toggle). Guarded by
+                // UploadedToS3 so a resumed run never uploads the same meeting twice.
+                if (!row.UploadedToS3)
                 {
                     var (uploaded, failed) = await UploadMeetingToS3Async(discipline, row.Group, row.Meeting, meetingFileName);
                     totalS3UploadedCount += uploaded;
@@ -1027,14 +1058,15 @@ public sealed partial class MainViewModel : ObservableObject
                 // failed count and is surfaced in the status text — the scrape is unaffected.
                 // Guarded by EventPublished so a resumed run never re-publishes; it's set even
                 // on failure (like UploadedToS3), otherwise the row would never count as done.
-                if (_settings.RabbitMqEnabled && !row.EventPublished)
+                if (_settings.PublishesToRabbitMq && !row.EventPublished)
                 {
                     // Carry the full S3 object base name (slug-prefixed), matching the uploaded
                     // file exactly — e.g. "swan-hill-20260922-TR-2026-09-22-11-42-50-meeting.json".
                     // The upload above still gets the bare name; it prepends the slug itself.
                     var meetingObjectName = $"{meetingSlug}-{meetingFileName}";
                     var evt = MeetingScrapedEvent.Create(
-                        discipline, row.Meeting, eventCorrelationId, _settings.RabbitMqDefaultPriority, meetingObjectName, meetingSlug);
+                        discipline, row.Meeting, eventCorrelationId, _settings.RabbitMqDefaultPriority, meetingObjectName, meetingSlug,
+                        MachineIdentity.Current);
                     if (await _eventPublisher.PublishMeetingScrapedAsync(evt, progress, token))
                         totalEventsPublishedCount++;
                     else
@@ -1067,17 +1099,14 @@ public sealed partial class MainViewModel : ObservableObject
                              $"{_raceDetails.Count} race(s) with full runner detail.";
                 SystemSounds.Asterisk.Play();
 
-                // Each meeting was already uploaded to S3 (if applicable) as soon as its races
-                // finished scraping (see the upload call in the race-detail loop above) — this
-                // just reports the running totals from those per-meeting uploads.
-                if (UploadToS3 || forceUploadToS3)
-                {
-                    StatusText += totalS3FailedCount > 0
-                        ? $" Uploaded {totalS3UploadedCount} file(s) to S3 ({totalS3FailedCount} failed — see above)."
-                        : $" Uploaded {totalS3UploadedCount} file(s) to S3.";
-                }
+                // Each meeting was already uploaded to S3 as soon as its races finished scraping
+                // (see the upload call in the race-detail loop above) — this just reports the
+                // running totals from those per-meeting uploads.
+                StatusText += totalS3FailedCount > 0
+                    ? $" Uploaded {totalS3UploadedCount} file(s) to S3 ({totalS3FailedCount} failed — see above)."
+                    : $" Uploaded {totalS3UploadedCount} file(s) to S3.";
 
-                if (_settings.RabbitMqEnabled)
+                if (_settings.PublishesToRabbitMq)
                 {
                     StatusText += totalEventsFailedCount > 0
                         ? $" Published {totalEventsPublishedCount} RabbitMQ event(s) ({totalEventsFailedCount} failed — see above)."
@@ -1208,7 +1237,7 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 foreach (var meeting in group.Meetings)
                 {
-                    var meetingResult = await ExportMeetingAsync(discipline, group.Group ?? "", meeting, targetFolder, uploadToS3: UploadToS3);
+                    var meetingResult = await ExportMeetingAsync(discipline, group.Group ?? "", meeting, targetFolder, uploadToS3: true);
                     fileCount += meetingResult.FileCount;
                     meetingFolderCount += meetingResult.MeetingFolderCount;
                     s3UploadedCount += meetingResult.S3UploadedCount;
@@ -1228,11 +1257,10 @@ public sealed partial class MainViewModel : ObservableObject
     /// <see cref="ScrapeAsync"/> as soon as each meeting's races finish, rather than waiting for
     /// the whole scrape to complete).
     /// </summary>
-    /// <param name="uploadToS3">Whether this call should also upload to S3. Kept as an explicit
-    /// parameter rather than always reading the <see cref="UploadToS3"/> checkbox directly — the
-    /// per-meeting export during a live scrape passes false, since S3 upload there is handled
-    /// independently (see <see cref="UploadMeetingToS3Async"/>) to avoid uploading the same file
-    /// twice; only the manual "Export JSON..." button passes the checkbox's live value.</param>
+    /// <param name="uploadToS3">Whether this call should also upload to S3. The per-meeting
+    /// export during a live scrape passes false, since S3 upload there is handled independently
+    /// (see <see cref="UploadMeetingToS3Async"/>) to avoid uploading the same file twice; only the
+    /// manual "Export JSON..." button passes true.</param>
     private async Task<ExportResult> ExportMeetingAsync(Discipline discipline, string group, Meeting meeting, string targetFolder, bool uploadToS3)
     {
         var fileCount = 0;

@@ -4,4 +4,7 @@
     <Project Path="src/PuntersScraper.Core/PuntersScraper.Core.csproj" />
     <Project Path="src/PuntersScraper.Shared/PuntersScraper.Shared.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PuntersScraper.Tests/PuntersScraper.Tests.csproj" />
+  </Folder>
 </Solution>

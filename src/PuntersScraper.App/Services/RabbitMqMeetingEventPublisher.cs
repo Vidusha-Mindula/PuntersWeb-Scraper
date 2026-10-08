@@ -30,6 +30,7 @@ public sealed class RabbitMqMeetingEventPublisher : IMeetingEventPublisher, IAsy
     private readonly AppSettings _settings;
     private readonly SemaphoreSlim _connectionGate = new(1, 1);
     private IConnection? _connection;
+    private string? _connectedHost;
     private bool _disposed;
 
     public RabbitMqMeetingEventPublisher(AppSettings settings) => _settings = settings;
@@ -46,7 +47,8 @@ public sealed class RabbitMqMeetingEventPublisher : IMeetingEventPublisher, IAsy
     public async Task<bool> PublishMeetingScrapedAsync(
         MeetingScrapedEvent evt, IProgress<string>? progress, CancellationToken ct)
     {
-        if (_disposed) return false;
+        // Defensive: callers already gate on this, but a Custom-environment run must never publish.
+        if (_disposed || !_settings.PublishesToRabbitMq) return false;
 
         Exception? lastError = null;
         for (var attempt = 1; attempt <= 2; attempt++)
@@ -111,7 +113,7 @@ public sealed class RabbitMqMeetingEventPublisher : IMeetingEventPublisher, IAsy
             .Replace("{source}", _settings.RabbitMqSource)
             .Replace("{disciplineCode}", (evt.DisciplineCode ?? "").ToLowerInvariant());
 
-        var body = JsonSerializer.SerializeToUtf8Bytes(evt, JsonOptions);
+        var body = SerializeBody(evt);
 
         var properties = new BasicProperties
         {
@@ -133,18 +135,33 @@ public sealed class RabbitMqMeetingEventPublisher : IMeetingEventPublisher, IAsy
             cancellationToken: ct);
     }
 
+    /// <summary>The exact message body published for <paramref name="evt"/> (camelCase JSON) —
+    /// exposed so tests can verify the wire payload without a broker.</summary>
+    internal static byte[] SerializeBody(MeetingScrapedEvent evt) =>
+        JsonSerializer.SerializeToUtf8Bytes(evt, JsonOptions);
+
     private async Task<IConnection> EnsureConnectionAsync(CancellationToken ct)
     {
-        if (_connection is { IsOpen: true }) return _connection;
+        if (_connection is { IsOpen: true } && _connectedHost == _settings.RabbitMqHostName) return _connection;
 
         await _connectionGate.WaitAsync(ct);
         try
         {
-            if (_connection is { IsOpen: true }) return _connection;
+            if (_connection is { IsOpen: true } && _connectedHost == _settings.RabbitMqHostName) return _connection;
 
+            // The Dev/Prod toggle changes the host at runtime — drop the connection to the old
+            // environment's broker so nothing is ever published to the wrong one.
+            if (_connection is not null)
+            {
+                try { await _connection.DisposeAsync(); }
+                catch { /* best effort — we're discarding it anyway */ }
+                _connection = null;
+            }
+
+            var hostName = _settings.RabbitMqHostName;
             var factory = new ConnectionFactory
             {
-                HostName = _settings.RabbitMqHostName,
+                HostName = hostName,
                 Port = _settings.RabbitMqPort,
                 VirtualHost = _settings.RabbitMqVirtualHost,
                 UserName = _settings.RabbitMqUserName,
@@ -154,6 +171,7 @@ public sealed class RabbitMqMeetingEventPublisher : IMeetingEventPublisher, IAsy
             };
 
             _connection = await factory.CreateConnectionAsync(ct);
+            _connectedHost = hostName;
             return _connection;
         }
         finally
