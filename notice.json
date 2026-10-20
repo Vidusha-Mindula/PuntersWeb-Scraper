@@ -1,5 +1,5 @@
 ﻿{
-    "id":  "20261008121729",
-    "title":  "v3.18.1 is out",
-    "message":  "Please update now. v3.18.0 was missing S3 credentials, so uploads may fail on that version. v3.18.1 restores them and includes the new Prod/Dev/Custom environment toggle (default Prod)."
+    "id":  "20261020174608",
+    "title":  "v3.18.2 is out",
+    "message":  "Please update now. Fixes scrapes for tomorrow and later dates failing with \u0027No fresh meetings payload appeared\u0027 on some computers (the scraper\u0027s browser clock now always follows Sydney time). Also shortens long-form race class labels."
 }
