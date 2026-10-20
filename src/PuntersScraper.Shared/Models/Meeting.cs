@@ -80,12 +80,69 @@ public sealed class RaceEvent
     /// ScrapeRaceAsync/ScrapeRacesForMeetingAsync has scraped that race's own page and overwritten
     /// it with the AUD figure Punters itself computes.</summary>
     public string? RacePrizeMoneyUnit { get; set; }
-    public string? EventClass { get; set; }
+    private string? _eventClass;
+
+    /// <summary>Short class label as Punters shows it on the race page (e.g.
+    /// "3-Y-O &amp; Up, Maiden, Set Weights"). Some races only carry the long sentence form
+    /// ("Maiden. Set Weights. Three-Years-Old and Upwards. No sex restriction. NSW Maiden Set
+    /// Weights"), which is converted on assignment by <see cref="EventClassFormatter"/>.</summary>
+    public string? EventClass
+    {
+        get => _eventClass;
+        set => _eventClass = EventClassFormatter.Shorten(value);
+    }
     public string? GroupType { get; set; }
     public TrackCondition? TrackCondition { get; set; }
     public Weather? Weather { get; set; }
     public List<EntryCondition> EntryConditions { get; set; } = new();
     public List<PrizeMoneyEntry> PrizeMoney { get; set; } = new();
+}
+
+internal static class EventClassFormatter
+{
+    private static readonly (string Long, string Short)[] AgeMap =
+    {
+        ("Two-Years-Old and Upwards", "2-Y-O & Up"),
+        ("Three-Years-Old and Upwards", "3-Y-O & Up"),
+        ("Four-Years-Old and Upwards", "4-Y-O & Up"),
+        ("Five-Years-Old and Upwards", "5-Y-O & Up"),
+        ("Two-Years-Old", "2-Y-O"),
+        ("Three-Years-Old", "3-Y-O"),
+        ("Four-Years-Old", "4-Y-O"),
+        ("Five-Years-Old", "5-Y-O"),
+    };
+
+    /// <summary>Converts the long form "Class. Weights. Age. Sex. Free-text name" into
+    /// "Age, Class, Weights[, Sex]". Anything not in that long form is returned unchanged.</summary>
+    public static string? Shorten(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return value;
+
+        var parts = value.Split(". ", StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 4 || !parts.Any(p => p.Contains("sex restriction", StringComparison.OrdinalIgnoreCase)))
+            return value;
+
+        var result = new List<string>();
+        foreach (var raw in parts.Take(4))
+        {
+            var part = raw.TrimEnd('.');
+            if (part.StartsWith("No ", StringComparison.OrdinalIgnoreCase)
+                && part.EndsWith("restriction", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var mapped = AgeMap.FirstOrDefault(a => a.Long.Equals(part, StringComparison.OrdinalIgnoreCase));
+            if (mapped.Short != null)
+            {
+                result.Insert(0, mapped.Short);
+            }
+            else
+            {
+                result.Add(part);
+            }
+        }
+
+        return result.Count > 0 ? string.Join(", ", result) : value;
+    }
 }
 
 public sealed class Meeting
