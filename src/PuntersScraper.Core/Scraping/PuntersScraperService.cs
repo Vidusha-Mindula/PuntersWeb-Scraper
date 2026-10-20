@@ -308,6 +308,32 @@ public sealed class PuntersScraperService : IPuntersScraperService
         _ => throw new ArgumentOutOfRangeException(nameof(discipline), discipline, null)
     };
 
+    /// <summary>
+    /// Opens a page whose clock is Sydney's. The Playwright-launched paths get this from the
+    /// context's TimezoneId, but the CDP-attach path reuses the browser's default context, which
+    /// has no such option — so on a machine outside Sydney's timezone the page's "today" (and what
+    /// Punters requests for a clicked date tab) silently followed the host clock instead, which is
+    /// why tomorrow/later dates came back with no data on some computers while today still worked.
+    /// </summary>
+    private async Task<IPage> NewSydneyPageAsync()
+    {
+        var page = await _context!.NewPageAsync();
+        if (_cdpBrowser is not null)
+        {
+            try
+            {
+                var session = await _context.NewCDPSessionAsync(page);
+                await session.SendAsync("Emulation.setTimezoneOverride",
+                    new Dictionary<string, object> { ["timezoneId"] = "Australia/Sydney" });
+            }
+            catch
+            {
+                // Best effort: without the override the scrape behaves as it did before.
+            }
+        }
+        return page;
+    }
+
     public async Task<ScrapeResult> ScrapeMeetingsAsync(
         Discipline discipline,
         DateOnly startDate,
@@ -326,7 +352,7 @@ public sealed class PuntersScraperService : IPuntersScraperService
                 "Call ScrapeMeetingsAsync once per day instead.");
         }
 
-        var page = await _context.NewPageAsync();
+        var page = await NewSydneyPageAsync();
         try
         {
             var formGuideUrl = $"{BaseUrl}/form-guide/{FormGuidePath(discipline)}/";
@@ -435,23 +461,43 @@ public sealed class PuntersScraperService : IPuntersScraperService
                 // ReadEmbeddedMeetingsAsync reads (confirmed by diffing it before/after) — the
                 // fresh data instead lands under a brand-new, unpredictable content-hash key in
                 // Nuxt's own payload, findable only by noticing it wasn't there before the click.
-                var keysBeforeClick = await GetNuxtPayloadDataKeysAsync(page);
+                // A single click can silently do nothing on slower machines (the tab bar can be
+                // visible before Vue has hydrated its click handler, or the payload request can
+                // outlast the wait) — which surfaced as "No fresh meetings payload appeared" for
+                // tomorrow/later dates only (today never clicks a tab). So re-snapshot, re-click
+                // and re-wait a couple of times before giving up.
+                const int maxTabClickAttempts = 3;
+                bodyJson = string.Empty;
+                for (var attempt = 1; attempt <= maxTabClickAttempts; attempt++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var keysBeforeClick = await GetNuxtPayloadDataKeysAsync(page);
 
-                // Punters' own lazy-loaded promo banner/modal frequently ends up sitting
-                // visually on top of the tab bar (it starts as a zero-height placeholder and
-                // expands once its ad content loads), which both blocks a normal click
-                // (endless "intercepts pointer events" retries against it, since the tab itself
-                // also carries "disable-pointer-events" — Punters' own click handling clearly
-                // works around that via something other than a plain simulated click) and
-                // silently hijacks a Force click into "clicking" the banner instead of the tab
-                // (Force still clicks at screen coordinates, and the banner is what's actually
-                // there). Removing it outright sidesteps both failure modes at once.
-                await page.EvaluateAsync("() => { const b = document.querySelector('.np-web-widget-campaign-modal'); if (b) b.remove(); }");
+                    // Punters' own lazy-loaded promo banner/modal frequently ends up sitting
+                    // visually on top of the tab bar (it starts as a zero-height placeholder and
+                    // expands once its ad content loads), which both blocks a normal click
+                    // (endless "intercepts pointer events" retries against it, since the tab itself
+                    // also carries "disable-pointer-events" — Punters' own click handling clearly
+                    // works around that via something other than a plain simulated click) and
+                    // silently hijacks a Force click into "clicking" the banner instead of the tab
+                    // (Force still clicks at screen coordinates, and the banner is what's actually
+                    // there). Removing it outright sidesteps both failure modes at once.
+                    await page.EvaluateAsync("() => { const b = document.querySelector('.np-web-widget-campaign-modal'); if (b) b.remove(); }");
 
-                await tab.First.ClickAsync(new LocatorClickOptions { Timeout = 10_000 });
+                    await tab.First.ClickAsync(new LocatorClickOptions { Timeout = 10_000 });
 
-                bodyJson = await ReadFreshTabMeetingsAsync(
-                    page, keysBeforeClick, startDate, filterMeetingsToExactDate: usingFallbackTab);
+                    bodyJson = await ReadFreshTabMeetingsAsync(
+                        page, keysBeforeClick, startDate, filterMeetingsToExactDate: usingFallbackTab,
+                        timeoutMs: 15_000 + (attempt - 1) * 10_000);
+
+                    if (!bodyJson.Contains("No fresh meetings payload appeared", StringComparison.Ordinal)
+                        || attempt == maxTabClickAttempts)
+                        break;
+
+                    progress?.Report(
+                        $"[P-{discipline.Code()}] No data after clicking '{tabLabel}' (attempt {attempt}/{maxTabClickAttempts}) — retrying ...");
+                    await page.WaitForTimeoutAsync(_settleDelayMs);
+                }
             }
 
             using var doc = JsonDocument.Parse(bodyJson);
@@ -503,7 +549,7 @@ public sealed class PuntersScraperService : IPuntersScraperService
 
         var raceUrl = $"{BaseUrl}/form-guide/{FormGuidePath(discipline)}/{meeting.Slug}/{raceEvent.Slug}/";
 
-        var page = await _context.NewPageAsync();
+        var page = await NewSydneyPageAsync();
         try
         {
             progress?.Report(
