@@ -53,6 +53,7 @@ public sealed class PuntersScraperService : IPuntersScraperService
     private IBrowser? _cdpBrowser;
     private IBrowserContext? _context;
     private Process? _browserProcess;
+    private string? _profileDir;
     private bool _headless;
     private int _navigationTimeoutMs = 45_000;
     private int _settleDelayMs = 1500;
@@ -178,9 +179,16 @@ public sealed class PuntersScraperService : IPuntersScraperService
     /// </summary>
     private async Task InitViaCdpAsync(string executablePath, ScraperOptions options, CancellationToken cancellationToken)
     {
-        var userDataDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "PuntersWebScraper", "browser-profile", options.Browser.ToString().ToLowerInvariant());
+        // A fresh, throwaway profile per session (deleted again in DisposeAsync). The old
+        // single persistent profile accumulated cookies/localStorage/HTTP cache run after run,
+        // and on one machine that state went bad — tomorrow/later dates returned nothing while
+        // today still worked — and it only cleared on a different Windows account (a different
+        // LocalAppData, so a different profile). A clean profile every run can't inherit that.
+        // The one thing worth keeping from the old design, Cloudflare's cf_clearance cookie, is
+        // carried across explicitly instead (see RestoreCloudflareClearanceAsync).
+        PruneStaleProfiles();
+        _profileDir = Path.Combine(ProfileRoot, "sessions", Guid.NewGuid().ToString("N"));
+        var userDataDir = _profileDir;
         Directory.CreateDirectory(userDataDir);
 
         var port = FindFreeTcpPort();
@@ -261,6 +269,93 @@ public sealed class PuntersScraperService : IPuntersScraperService
 
         _cdpBrowser = await _playwright!.Chromium.ConnectOverCDPAsync(endpoint);
         _context = _cdpBrowser.Contexts.Count > 0 ? _cdpBrowser.Contexts[0] : await _cdpBrowser.NewContextAsync();
+        await RestoreCloudflareClearanceAsync();
+    }
+
+    // ── Per-session profile housekeeping ─────────────────────────────────────────────────────
+
+    private static string ProfileRoot => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "PuntersWebScraper", "browser-profile");
+
+    private static string ClearanceFilePath => Path.Combine(ProfileRoot, "cf-clearance.json");
+
+    private sealed record SavedCookie(string Name, string Value, string Domain, string Path, float Expires, bool HttpOnly, bool Secure);
+
+    /// <summary>
+    /// Removes profiles a crashed or force-killed run left behind (anything older than a day —
+    /// younger ones may belong to another scraper instance still running — and a folder an
+    /// active browser holds open simply fails to delete and is skipped), plus the old
+    /// single-profile folders from before profiles were per-session.
+    /// </summary>
+    private static void PruneStaleProfiles()
+    {
+        try
+        {
+            var sessions = Path.Combine(ProfileRoot, "sessions");
+            if (Directory.Exists(sessions))
+            {
+                foreach (var dir in Directory.GetDirectories(sessions))
+                {
+                    if (DateTime.UtcNow - Directory.GetCreationTimeUtc(dir) > TimeSpan.FromDays(1))
+                    {
+                        TryDeleteDirectory(dir);
+                    }
+                }
+            }
+
+            foreach (var legacy in new[] { "edge", "chrome" })
+            {
+                var dir = Path.Combine(ProfileRoot, legacy);
+                if (Directory.Exists(dir)) TryDeleteDirectory(dir);
+            }
+        }
+        catch { /* housekeeping only — never block a scrape on it */ }
+    }
+
+    private static void TryDeleteDirectory(string dir)
+    {
+        try { Directory.Delete(dir, recursive: true); }
+        catch { /* in use or already gone */ }
+    }
+
+    /// <summary>
+    /// Loads the last session's cf_clearance cookie (if it hasn't expired) into the fresh
+    /// profile so Cloudflare doesn't re-challenge on every run. It's tied by Cloudflare to the
+    /// browser and IP, so if either changed (e.g. after a VPN rotation) it just gets ignored and
+    /// the normal challenge handling takes over.
+    /// </summary>
+    private async Task RestoreCloudflareClearanceAsync()
+    {
+        try
+        {
+            if (!File.Exists(ClearanceFilePath)) return;
+            var saved = JsonSerializer.Deserialize<List<SavedCookie>>(await File.ReadAllTextAsync(ClearanceFilePath));
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var live = saved?.Where(c => c.Expires > now).Select(c => new Microsoft.Playwright.Cookie
+            {
+                Name = c.Name, Value = c.Value, Domain = c.Domain, Path = c.Path,
+                Expires = c.Expires, HttpOnly = c.HttpOnly, Secure = c.Secure
+            }).ToList();
+            if (live is { Count: > 0 }) await _context!.AddCookiesAsync(live);
+        }
+        catch { /* a missing/corrupt clearance file just means a normal first-run challenge */ }
+    }
+
+    private async Task SaveCloudflareClearanceAsync()
+    {
+        try
+        {
+            if (_context is null) return;
+            var cookies = (await _context.CookiesAsync(new[] { BaseUrl }))
+                .Where(c => c.Name == "cf_clearance")
+                .Select(c => new SavedCookie(c.Name, c.Value, c.Domain, c.Path, c.Expires, c.HttpOnly, c.Secure))
+                .ToList();
+            if (cookies.Count == 0) return;
+            Directory.CreateDirectory(ProfileRoot);
+            await File.WriteAllTextAsync(ClearanceFilePath, JsonSerializer.Serialize(cookies));
+        }
+        catch { /* best effort */ }
     }
 
     private static int FindFreeTcpPort()
@@ -1785,6 +1880,7 @@ public sealed class PuntersScraperService : IPuntersScraperService
     {
         if (_cdpBrowser is not null)
         {
+            await SaveCloudflareClearanceAsync();
             try { await _cdpBrowser.CloseAsync(); } catch { /* already gone */ }
         }
         else
@@ -1805,6 +1901,16 @@ public sealed class PuntersScraperService : IPuntersScraperService
         }
         catch { /* already exited */ }
         _browserProcess?.Dispose();
+
+        // The browser can take a moment to release its profile files after exiting.
+        if (_profileDir is not null)
+        {
+            for (var i = 0; i < 5 && Directory.Exists(_profileDir); i++)
+            {
+                TryDeleteDirectory(_profileDir);
+                if (Directory.Exists(_profileDir)) await Task.Delay(500);
+            }
+        }
 
         _playwright?.Dispose();
     }
