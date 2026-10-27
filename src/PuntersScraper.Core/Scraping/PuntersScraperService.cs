@@ -1533,6 +1533,19 @@ public sealed class PuntersScraperService : IPuntersScraperService
                     };
                 }
 
+                // Punters' own page shows the weight net of jockeyWeightClaim (a negative kg
+                // value) when the rider isn't flagged apprentice (e.g. UK conditionals), so
+                // sel.weight 75.25 with claim -1.25 renders as 74kg. Flagged apprentices keep
+                // the raw weight and the page just adds an "(a-N)" badge beside it. Checked
+                // against all 9 runners of a live Bangor-on-Dee card.
+                function displayWeightKg(sel) {
+                    if (sel.weight == null) return null;
+                    const claim = Number(sel.jockeyWeightClaim);
+                    const apprentice = sel.jockey && String(sel.jockey.apprentice) === '1';
+                    if (apprentice || !claim) return sel.weight;
+                    return Math.round((Number(sel.weight) + claim) * 100) / 100;
+                }
+
                 function kgToWeightInfo(kg) {
                     if (kg == null) return { weightKg: null, weightImp: null, weightLbs: null };
                     const lbsTotal = Math.round(Number(kg) * 2.20462);
@@ -1717,7 +1730,7 @@ public sealed class PuntersScraperService : IPuntersScraperService
                         gearChanges: sel.gearChanges || null,
                         jockey: sel.jockey ? { id: sel.jockey.id, name: sel.jockey.name, slug: sel.jockey.slug } : null,
                         trainer: sel.trainer ? { id: sel.trainer.id, name: sel.trainer.name, slug: sel.trainer.slug } : null,
-                        carryingWeight: kgToWeightInfo(sel.weight),
+                        carryingWeight: kgToWeightInfo(displayWeightKg(sel)),
                         lastRun: pastRuns.length ? pastRuns[0].date : null,
                         lastRunComment: lastRunComment,
                         pastRuns: pastRuns,
