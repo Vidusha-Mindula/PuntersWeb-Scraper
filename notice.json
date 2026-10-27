@@ -1,5 +1,5 @@
 ﻿{
-    "id":  "20261027101541",
-    "title":  "v3.18.3 is out",
-    "message":  "Please update now. Runner weights now match what Punters shows: when a rider carries a weight claim (e.g. UK conditionals) the claim is deducted, so a 75.25kg runner with a 1.25kg claim is saved as 74kg. Apprentice riders keep their listed weight, as on the site. - Vidusha Mindula"
+    "id":  "20261027105125",
+    "title":  "v4.0.0 is out",
+    "message":  "Please update now. Each scrape now starts with a fresh browser profile, which fixes scrapes that only returned today\u0027s meetings (tomorrow and later dates came back empty) on some computers. Cloudflare verification is still remembered between runs. - Developer"
 }
