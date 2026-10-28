@@ -1268,7 +1268,12 @@ public sealed partial class MainViewModel : ObservableObject
         var s3FailedCount = 0;
 
         var meetingFolderName = Slugify(meeting.Slug ?? meeting.Name ?? meeting.Id ?? "meeting");
-        var meetingFolder = Path.Combine(targetFolder, meetingFolderName);
+        // {targetFolder}\{meeting date}\{meeting}. The date is the meeting's own local race date
+        // (not the scrape date), so a re-scrape of the same meeting lands in the same folder.
+        var dateFolderName = DateOnly.TryParse(meeting.MeetingDateLocal, out var meetingDate)
+            ? meetingDate.ToString("yyyy-MM-dd")
+            : DateTime.Today.ToString("yyyy-MM-dd");
+        var meetingFolder = Path.Combine(targetFolder, dateFolderName, meetingFolderName);
         Directory.CreateDirectory(meetingFolder);
 
         // Required top-level shape for TroyenRaceIngestor: data.meetingsGrouped[].{group,meetings[]}.

@@ -175,7 +175,7 @@
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <TextBlock Text="Download folder" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
                                 <TextBox Text="{Binding DownloadFolder}" Width="340" IsReadOnly="True" Margin="0,0,8,0"
-                                         ToolTip="Default folder Export JSON opens to, and that auto-export (if enabled) writes to directly." />
+                                         ToolTip="Root folder for exports (default: Downloads\PUNTERS). Files are saved to {date}\{meeting} inside it — by Export JSON and by auto-export (if enabled)." />
                                 <Button Content="Browse..." Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding BrowseDownloadFolderCommand}" Margin="0,0,24,0" />
 
                                 <CheckBox Content="Auto-export JSON after scrape" IsChecked="{Binding AutoExportAfterScrape}" VerticalAlignment="Center" Margin="0,0,24,0"

@@ -10,7 +10,12 @@ namespace PuntersScraper.App;
 /// defaults on every version, to stop per-machine config drift from silently surviving updates.</summary>
 public sealed class AppSettings
 {
-    public string DownloadFolder { get; set; } = "";
+    /// <summary>Default export root: "Downloads\PUNTERS" under the user's profile. Exports land in
+    /// "{DownloadFolder}\{meeting date}\{meeting}" (see MainViewModel.ExportMeetingAsync).</summary>
+    public static string DefaultDownloadFolder => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "PUNTERS");
+
+    public string DownloadFolder { get; set; } = DefaultDownloadFolder;
     public bool AutoExportAfterScrape { get; set; }
 
     /// <summary>Which environment scrapes are delivered to — picks both the S3 bucket
@@ -151,6 +156,11 @@ public sealed class AppSettings
             // Corrupt or unreadable settings file — fall back to defaults rather than crash the app.
             _cached = new AppSettings();
         }
+
+        // The installer's baked-in settings.json (and older saved ones) carry "DownloadFolder":"" —
+        // treat blank as "use the default" rather than leaving auto-export without a folder.
+        if (string.IsNullOrWhiteSpace(_cached.DownloadFolder))
+            _cached.DownloadFolder = DefaultDownloadFolder;
 
         return _cached;
     }
