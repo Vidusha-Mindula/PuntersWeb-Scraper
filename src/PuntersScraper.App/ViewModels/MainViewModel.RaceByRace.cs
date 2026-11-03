@@ -13,8 +13,9 @@ namespace PuntersScraper.App.ViewModels;
 /// wanted under each meeting's expander, then download only those. Shares <see cref="IsBusy"/>,
 /// <see cref="StopCommand"/>, the browser choice and <see cref="DownloadFolder"/> with the main
 /// scraper, but keeps its own meeting list and race detail so it never mixes with a main run.
-/// Downloads are saved to the download folder only — nothing is uploaded to S3 or published to
-/// RabbitMQ from here.
+/// Downloads are saved to the download folder and, unless unticked (<see cref="RaceUploadToS3"/>),
+/// also uploaded to the selected environment's S3 bucket. No RabbitMQ event is published from
+/// here — a meeting with only some of its races isn't announced as a finished meeting.
 /// </summary>
 public sealed partial class MainViewModel
 {
@@ -35,6 +36,26 @@ public sealed partial class MainViewModel
     /// <summary>Optional: only list meetings whose name contains this text (case-insensitive).</summary>
     [ObservableProperty]
     private string raceSearchCourse = "";
+
+    /// <summary>Also upload each downloaded race (and its meeting file) to the S3 bucket of the
+    /// environment picked on the Scraper tab (Prod/Dev/Custom).</summary>
+    [ObservableProperty]
+    private bool raceUploadToS3 = true;
+
+    partial void OnRaceUploadToS3Changed(bool value)
+    {
+        if (_loadingSettings) return;
+        _settings.RaceByRaceUploadToS3 = value;
+        _settings.Save();
+    }
+
+    /// <summary>Where an upload would go right now, shown next to the checkbox.</summary>
+    public string S3TargetSummary => _settings.TargetEnvironment switch
+    {
+        TargetEnvironment.Dev => $"Dev bucket '{_settings.S3BucketName}'",
+        TargetEnvironment.Custom => $"Custom bucket '{_settings.S3BucketName}'",
+        _ => $"Prod bucket '{_settings.S3BucketName}'",
+    };
 
     [ObservableProperty]
     private int selectedRaceCount;
@@ -188,6 +209,14 @@ public sealed partial class MainViewModel
             return;
         }
 
+        // Same guard as the main scraper: Custom has no fallback bucket.
+        if (RaceUploadToS3 && _settings.TargetEnvironment == TargetEnvironment.Custom
+            && string.IsNullOrWhiteSpace(_settings.S3BucketName))
+        {
+            StatusText = "Custom environment selected — enter a bucket name on the Scraper tab, or untick the S3 upload.";
+            return;
+        }
+
         if (!EnsureBrowserAvailable()) return;
 
         _cts = new CancellationTokenSource();
@@ -204,6 +233,10 @@ public sealed partial class MainViewModel
         var downloaded = 0;
         var failed = 0;
         var meetingFolders = 0;
+        var s3Uploaded = 0;
+        var s3Failed = 0;
+        // Read once so ticking/unticking mid-run can't change what this run does.
+        var uploadToS3 = RaceUploadToS3;
 
         // Same cap as the main scraper — several race tabs at once within a meeting.
         const int RaceConcurrency = 3;
@@ -271,8 +304,10 @@ public sealed partial class MainViewModel
                 if (runDetails.Count > 0)
                 {
                     var export = await ExportMeetingAsync(
-                        discipline, meetingRow.Group, meetingRow.Meeting, DownloadFolder, uploadToS3: false, runDetails);
+                        discipline, meetingRow.Group, meetingRow.Meeting, DownloadFolder, uploadToS3, runDetails);
                     meetingFolders += export.MeetingFolderCount;
+                    s3Uploaded += export.S3UploadedCount;
+                    s3Failed += export.S3FailedCount;
                     progress.Report(
                         $"[P-{discipline.Code()}] Saved {runDetails.Count} race(s) of {meetingRow.MeetingName} ({export.FileCount} file(s)).");
                 }
@@ -282,7 +317,8 @@ public sealed partial class MainViewModel
 
             await FlushProgressAsync();
             StatusText = $"Done. Downloaded {downloaded} race(s) from {meetingFolders} meeting(s) to {DownloadFolder}" +
-                         (failed > 0 ? $". {failed} race(s) failed — see the status next to each race." : ".");
+                         (failed > 0 ? $". {failed} race(s) failed — see the status next to each race." : ".") +
+                         FormatS3Suffix(new ExportResult(0, 0, s3Uploaded, s3Failed));
             SystemSounds.Asterisk.Play();
         }
         catch (OperationCanceledException)
@@ -292,7 +328,8 @@ public sealed partial class MainViewModel
                     race.Status = "Stopped";
 
             await FlushProgressAsync();
-            StatusText = $"Stopped by user. Downloaded {downloaded} race(s) before stopping.";
+            StatusText = $"Stopped by user. Downloaded {downloaded} race(s) before stopping." +
+                         FormatS3Suffix(new ExportResult(0, 0, s3Uploaded, s3Failed));
         }
         catch (Exception ex)
         {

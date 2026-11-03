@@ -588,7 +588,14 @@
                                 <TextBlock Text="Download folder" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
                                 <TextBox Text="{Binding DownloadFolder}" Width="340" IsReadOnly="True" Margin="0,0,8,0"
                                          ToolTip="Races are saved to {date}\{meeting} inside this folder. Same folder as on the Scraper tab." />
-                                <Button Content="Browse..." Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding BrowseDownloadFolderCommand}" />
+                                <Button Content="Browse..." Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding BrowseDownloadFolderCommand}" Margin="0,0,24,0" />
+
+                                <!-- The bucket is the environment picked on the Scraper tab (Prod by default),
+                                     so it's spelled out here rather than left as a surprise. -->
+                                <CheckBox Content="Also upload to S3" IsChecked="{Binding RaceUploadToS3}" VerticalAlignment="Center"
+                                          ToolTip="Uploads each downloaded race and its meeting file to the S3 bucket of the environment selected on the Scraper tab. No RabbitMQ event is sent." />
+                                <TextBlock Text="{Binding S3TargetSummary, StringFormat=' → {0}'}" VerticalAlignment="Center"
+                                           Foreground="{StaticResource AccentHoverBrush}" FontWeight="SemiBold" Margin="6,0,0,0" />
                             </StackPanel>
                         </StackPanel>
                     </Border>
