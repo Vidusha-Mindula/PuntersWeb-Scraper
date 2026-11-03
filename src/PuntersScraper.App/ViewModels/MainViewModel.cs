@@ -871,17 +871,23 @@ public sealed partial class MainViewModel : ObservableObject
             (AutoExportAfterScrape && !string.IsNullOrWhiteSpace(DownloadFolder) && !r.ExportedLocally) ||
             (_settings.PublishesToRabbitMq && !r.EventPublished);
 
-        // Races already tried during this call, success or failure. A race that fails (or comes
-        // back without a race id) never lands in _raceDetails, so without this the Phase 2 loop
-        // below kept re-picking the same meeting and re-running its failed races forever — the
-        // progress bar climbing past 100% (400%, 700%, ...) and the run never moving on to the
-        // next meeting. A failed race is skipped for the rest of this call; a later Continue
-        // starts with an empty set, so it gets another go then.
-        var attemptedEvents = new HashSet<RaceEvent>(ReferenceEqualityComparer.Instance);
-        bool RaceIsSettled(RaceEvent e) =>
-            attemptedEvents.Contains(e) || (e.Id is not null && _raceDetails.ContainsKey(e.Id));
-        bool RowIsFullyDone(MeetingRow r) =>
-            r.Meeting.Events.All(RaceIsSettled) && !RowNeedsUploadOrExport(r);
+        // A race that fails (or comes back without a race id) never lands in _raceDetails. Without
+        // a cap on passes, the Phase 2 loop below kept re-picking the same meeting and re-running
+        // its failed races forever — the progress bar climbing past 100% (400%, 700%, ...) and the
+        // run never moving on to the next meeting. Instead, a meeting with any failed race is held
+        // back (not uploaded/exported/published), the rest of the meetings carry on, and once
+        // they're done it's scraped again from the start. Each meeting gets at most this many full
+        // passes (the first plus retries); after that it's delivered with whichever races did
+        // succeed, so one permanently broken race can't block it forever.
+        const int MaxMeetingAttempts = 3;
+        var incompleteMeetingCount = 0;
+
+        bool RowComplete(MeetingRow r) =>
+            r.Meeting.Events.All(e => e.Id is not null && _raceDetails.ContainsKey(e.Id));
+        bool RowNeedsScrape(MeetingRow r) => !RowComplete(r) && r.ScrapeAttempts < MaxMeetingAttempts;
+        bool RowIsDone(MeetingRow r) => !RowNeedsUploadOrExport(r);
+        // Scraped at least once, still missing races, retries left: waits for its turn at the end.
+        bool RowIsDeferred(MeetingRow r) => r.ScrapeAttempts > 0 && RowNeedsScrape(r);
 
         try
         {
@@ -973,24 +979,47 @@ public sealed partial class MainViewModel : ObservableObject
             while (true)
             {
                 token.ThrowIfCancellationRequested();
-                var row = Meetings.FirstOrDefault(r => !RowIsFullyDone(r));
+                // Meetings waiting for a retry come last — only once nothing else is left do they
+                // get their second (and third) go.
+                var row = Meetings.FirstOrDefault(r => !RowIsDone(r) && !RowIsDeferred(r))
+                          ?? Meetings.FirstOrDefault(r => !RowIsDone(r));
                 if (row is null) break;
 
                 var discipline = row.DisciplineEnum;
 
-                // Only races this meeting doesn't already have detail for — on a fresh run
-                // that's all of them, on a resume it's whatever didn't finish (or was never
-                // reached) before the previous Stop.
-                var pendingEvents = row.Meeting.Events
-                    .Where(e => !RaceIsSettled(e))
-                    .ToList();
-
-                if (pendingEvents.Count > 0)
+                if (RowNeedsScrape(row))
                 {
+                    var isRetry = row.ScrapeAttempts > 0;
+
+                    // First pass: only races this meeting doesn't already have detail for — all of
+                    // them on a fresh run, or whatever didn't finish before a Stop on a resume.
+                    // Retry: the whole meeting again from the start. What the earlier pass got is set
+                    // aside and put back for any race that fails again, so a retry can't leave the
+                    // meeting with less than it had.
+                    var previousDetails = new Dictionary<string, RaceDetail>();
+                    List<RaceEvent> pendingEvents;
+                    if (isRetry)
+                    {
+                        pendingEvents = row.Meeting.Events.ToList();
+                        foreach (var e in pendingEvents)
+                        {
+                            if (e.Id is not null && _raceDetails.Remove(e.Id, out var old)) previousDetails[e.Id] = old;
+                        }
+                        row.RacesWithDetail = 0;
+                        row.Note = $"Retrying (attempt {row.ScrapeAttempts + 1}/{MaxMeetingAttempts})";
+                        progress.Report(
+                            $"[P-{discipline.Code()}] Retrying {row.MeetingName} from the start (attempt {row.ScrapeAttempts + 1}/{MaxMeetingAttempts}).");
+                    }
+                    else
+                    {
+                        pendingEvents = row.Meeting.Events
+                            .Where(e => e.Id is null || !_raceDetails.ContainsKey(e.Id))
+                            .ToList();
+                    }
+
                     // Races that already have detail (from before a Stop) count as processed, so
                     // the bar starts from there and can't overshoot on a resume.
                     row.RacesProcessed = row.RaceCount - pendingEvents.Count;
-                    foreach (var pending in pendingEvents) attemptedEvents.Add(pending);
 
                     // Races within a meeting are scraped several at a time (see raceConcurrency
                     // below), each in its own tab. This used to be strictly sequential: each
@@ -1033,7 +1062,39 @@ public sealed partial class MainViewModel : ObservableObject
                             raceConcurrencyLimiter.Release();
                         }
                     });
-                    await Task.WhenAll(raceTasks);
+                    try
+                    {
+                        await Task.WhenAll(raceTasks);
+                    }
+                    finally
+                    {
+                        foreach (var (id, old) in previousDetails) _raceDetails.TryAdd(id, old);
+                        row.RacesWithDetail = row.Meeting.Events.Count(e => e.Id is not null && _raceDetails.ContainsKey(e.Id));
+                    }
+
+                    row.ScrapeAttempts++;
+                }
+
+                // Any failed race: hold this meeting back (nothing uploaded, exported or published
+                // yet) and move on — it's picked up again after every other meeting is done.
+                if (RowIsDeferred(row))
+                {
+                    var missing = row.RaceCount - row.RacesWithDetail;
+                    row.Note = $"{missing} race(s) failed — retry pending ({row.ScrapeAttempts}/{MaxMeetingAttempts})";
+                    progress.Report(
+                        $"[P-{discipline.Code()}] {row.MeetingName}: {missing} of {row.RaceCount} race(s) failed — " +
+                        "skipping this meeting for now, it'll be scraped again from the start after the others.");
+                    continue;
+                }
+
+                if (!RowComplete(row))
+                {
+                    incompleteMeetingCount++;
+                    row.Note = $"Missing {row.RaceCount - row.RacesWithDetail} race(s) after {MaxMeetingAttempts} attempts";
+                }
+                else
+                {
+                    row.Note = "";
                 }
 
                 // Generate this meeting's export file name once (and keep it on the row), so the
@@ -1122,6 +1183,11 @@ public sealed partial class MainViewModel : ObservableObject
                 StatusText += totalS3FailedCount > 0
                     ? $" Uploaded {totalS3UploadedCount} file(s) to S3 ({totalS3FailedCount} failed — see above)."
                     : $" Uploaded {totalS3UploadedCount} file(s) to S3.";
+
+                if (incompleteMeetingCount > 0)
+                {
+                    StatusText += $" {incompleteMeetingCount} meeting(s) still had missing races after {MaxMeetingAttempts} attempts — delivered as-is, see the Note column.";
+                }
 
                 if (_settings.PublishesToRabbitMq)
                 {

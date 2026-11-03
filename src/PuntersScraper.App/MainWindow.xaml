@@ -235,6 +235,7 @@
                                 <DataGridTextColumn Header="First Race" Binding="{Binding FirstRaceLocalTime}" Width="90" />
                                 <DataGridTextColumn Header="Track" Binding="{Binding TrackCondition}" Width="80" />
                                 <DataGridTextColumn Header="Stage" Binding="{Binding MeetingStage}" Width="100" />
+                                <DataGridTextColumn Header="Note" Binding="{Binding Note}" Width="200" />
                                 <DataGridTemplateColumn Header="Progress" Width="130">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
@@ -411,6 +412,7 @@
                                 <DataGridTextColumn Header="Country" Binding="{Binding Country}" Width="70" />
                                 <DataGridTextColumn Header="Races" Binding="{Binding RaceCount}" Width="55" />
                                 <DataGridTextColumn Header="Detail" Binding="{Binding RacesWithDetail}" Width="55" />
+                                <DataGridTextColumn Header="Note" Binding="{Binding Note}" Width="200" />
                                 <DataGridTemplateColumn Header="Progress" Width="130">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>

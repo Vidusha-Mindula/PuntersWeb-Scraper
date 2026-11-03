@@ -48,6 +48,14 @@ public sealed partial class MeetingRow : ObservableObject
 
     partial void OnRacesProcessedChanged(int value) => OnPropertyChanged(nameof(ProgressPercent));
 
+    /// <summary>Full passes made over this meeting's races so far (the first scrape plus any
+    /// retries after a failed race). Kept on the row so it survives Stop/Continue.</summary>
+    public int ScrapeAttempts { get; set; }
+
+    /// <summary>Short status shown in the grid — e.g. a retry is pending, or races are still missing.</summary>
+    [ObservableProperty]
+    private string note = "";
+
     /// <summary>Set once this meeting's S3 upload has actually run — lets
     /// <see cref="MainViewModel"/>'s race-scrape loop tell "already uploaded" apart from "not due
     /// yet", so resuming after Stop (see MainViewModel.ContinueAsync) never uploads the same
