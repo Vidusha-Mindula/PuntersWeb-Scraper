@@ -11,6 +11,10 @@ public sealed partial class AppNotification : ObservableObject
     public string Message { get; init; } = "";
     public DateTime Time { get; init; } = DateTime.Now;
 
+    /// <summary>Optional tag for notices about one thing (e.g. one meeting), so they can all be
+    /// removed together once it no longer applies — see MainViewModel.RemoveNotifications.</summary>
+    public string? Key { get; init; }
+
     /// <summary>True for the popup opened by clicking a notification in the list: it stays until
     /// closed and is never added to the list again.</summary>
     public bool IsDetail { get; init; }

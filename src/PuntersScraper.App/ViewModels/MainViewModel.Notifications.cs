@@ -40,19 +40,20 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(HasNotifications));
     }
 
-    /// <summary>Shows a popup for 30 seconds. Safe to call from any thread.</summary>
-    private void Notify(string title, string message)
+    /// <summary>Shows a popup for 30 seconds. Safe to call from any thread. <paramref name="key"/>
+    /// tags notices about the same thing so <see cref="RemoveNotifications"/> can clear them later.</summary>
+    private void Notify(string title, string message, string? key = null)
     {
         var dispatcher = System.Windows.Application.Current?.Dispatcher;
         if (dispatcher is null) return;
 
         if (!dispatcher.CheckAccess())
         {
-            dispatcher.BeginInvoke(() => Notify(title, message));
+            dispatcher.BeginInvoke(() => Notify(title, message, key));
             return;
         }
 
-        var notification = new AppNotification { Title = title, Message = message };
+        var notification = new AppNotification { Title = title, Message = message, Key = key };
         var timer = new DispatcherTimer { Interval = ToastDuration };
         timer.Tick += (_, _) =>
         {
@@ -72,6 +73,38 @@ public sealed partial class MainViewModel
             var oldest = ToastNotifications.First(t => !t.IsDetail);
             RetireToast(oldest, read: false);
         }
+    }
+
+    /// <summary>One key per meeting, shared by every notice about it.</summary>
+    private static string MeetingNotificationKey(MeetingRow row) =>
+        $"meeting:{row.DisciplineEnum}:{row.Meeting.Id ?? row.MeetingName}:{row.Date:yyyy-MM-dd}";
+
+    /// <summary>Takes away every notice tagged <paramref name="key"/> — popups still on screen and
+    /// entries in the list — because what they said no longer applies (e.g. a meeting that failed
+    /// earlier has now downloaded successfully). A popup the user opened from the list to read is
+    /// left alone until they close it.</summary>
+    private void RemoveNotifications(string key)
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is null) return;
+
+        if (!dispatcher.CheckAccess())
+        {
+            dispatcher.BeginInvoke(() => RemoveNotifications(key));
+            return;
+        }
+
+        foreach (var toast in ToastNotifications.Where(t => t.Key == key && !t.IsDetail).ToList())
+        {
+            toast.Timer?.Stop();
+            toast.Timer = null;
+            ToastNotifications.Remove(toast);
+        }
+
+        foreach (var entry in Notifications.Where(n => n.Key == key).ToList())
+            Notifications.Remove(entry);
+
+        RefreshNotificationState();
     }
 
     private void AddToNotificationList(AppNotification notification, bool read)

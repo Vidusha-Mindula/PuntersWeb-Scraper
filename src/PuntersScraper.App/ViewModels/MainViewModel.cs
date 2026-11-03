@@ -94,8 +94,7 @@ public sealed partial class MainViewModel : ObservableObject
         foreach (var option in CountryOptions) option.SelectionChanged += RecomputeCountryCodeFilter;
 
         _ = CheckForUpdatesAsync();
-        _ = CheckForDeveloperNoticeAsync();
-        _autoScrapeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        _ = CheckForDeveloperNoticeAsync();        _autoScrapeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
         _autoScrapeTimer.Tick += (_, _) => _ = AutoScrapeTickAsync();
         _autoScrapeTimer.Start();
     }
@@ -1109,7 +1108,8 @@ public sealed partial class MainViewModel : ObservableObject
                     Notify($"{row.MeetingName}: {missing} race(s) failed",
                         $"{row.MeetingName} ({row.Date:yyyy-MM-dd}): race(s) {MissingRaceList(row)} couldn't be scraped. " +
                         "The other meetings are carrying on without delay. Once they're done, the VPN location will be changed " +
-                        $"and this meeting will be scraped again from the start (attempt {row.ScrapeAttempts + 1} of {MaxMeetingAttempts}).");
+                        $"and this meeting will be scraped again from the start (attempt {row.ScrapeAttempts + 1} of {MaxMeetingAttempts}).",
+                        MeetingNotificationKey(row));
                     continue;
                 }
 
@@ -1124,6 +1124,9 @@ public sealed partial class MainViewModel : ObservableObject
                 else
                 {
                     row.Note = "";
+                    // Every race came through (e.g. on a retry): the earlier "race(s) failed" notices
+                    // for this meeting are out of date, so take them away.
+                    RemoveNotifications(MeetingNotificationKey(row));
                 }
 
                 // Generate this meeting's export file name once (and keep it on the row), so the
