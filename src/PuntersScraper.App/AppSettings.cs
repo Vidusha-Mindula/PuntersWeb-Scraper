@@ -18,6 +18,10 @@ public sealed class AppSettings
     public string DownloadFolder { get; set; } = DefaultDownloadFolder;
     public bool AutoExportAfterScrape { get; set; }
 
+    /// <summary>Whether the Race by Race tab also uploads the races it downloads to the selected
+    /// environment's S3 bucket (on by default). It never publishes RabbitMQ events.</summary>
+    public bool RaceByRaceUploadToS3 { get; set; } = true;
+
     /// <summary>Which environment scrapes are delivered to — picks both the S3 bucket
     /// (<see cref="S3BucketName"/>) and the RabbitMQ broker (<see cref="RabbitMqHostName"/>)
     /// together, so the two can never point at different environments. Switched via the

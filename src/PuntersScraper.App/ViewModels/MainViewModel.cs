@@ -89,6 +89,7 @@ public sealed partial class MainViewModel : ObservableObject
         UseFirefoxBrowser = _settings.ScraperBrowser == nameof(ScraperBrowserChoice.Firefox);
         UseEdgeBrowser = _settings.ScraperBrowser == nameof(ScraperBrowserChoice.Edge);
         UseChromeBrowser = !UseFirefoxBrowser && !UseEdgeBrowser;
+        RaceUploadToS3 = _settings.RaceByRaceUploadToS3;
         _loadingSettings = false;
 
         foreach (var option in CountryOptions) option.SelectionChanged += RecomputeCountryCodeFilter;
@@ -550,6 +551,7 @@ public sealed partial class MainViewModel : ObservableObject
         if (_loadingSettings || !value) return;
         _settings.TargetEnvironment = TargetEnvironment.Prod;
         _settings.Save();
+        OnPropertyChanged(nameof(S3TargetSummary));
     }
 
     partial void OnUseDevEnvironmentChanged(bool value)
@@ -557,6 +559,7 @@ public sealed partial class MainViewModel : ObservableObject
         if (_loadingSettings || !value) return;
         _settings.TargetEnvironment = TargetEnvironment.Dev;
         _settings.Save();
+        OnPropertyChanged(nameof(S3TargetSummary));
     }
 
     partial void OnUseCustomEnvironmentChanged(bool value)
@@ -564,6 +567,7 @@ public sealed partial class MainViewModel : ObservableObject
         if (_loadingSettings || !value) return;
         _settings.TargetEnvironment = TargetEnvironment.Custom;
         _settings.Save();
+        OnPropertyChanged(nameof(S3TargetSummary));
     }
 
     partial void OnCustomBucketNameChanged(string value)
@@ -571,6 +575,7 @@ public sealed partial class MainViewModel : ObservableObject
         if (_loadingSettings) return;
         _settings.CustomS3BucketName = value;
         _settings.Save();
+        OnPropertyChanged(nameof(S3TargetSummary));
     }
 
     /// <summary>Closes the RabbitMQ connection on shutdown — called from App.OnExit. Bounded by a
