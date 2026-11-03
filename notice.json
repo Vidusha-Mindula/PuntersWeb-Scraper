@@ -1,5 +1,5 @@
 ﻿{
-    "id":  "20261027105125",
-    "title":  "v4.0.0 is out",
-    "message":  "Please update now. Each scrape now starts with a fresh browser profile, which fixes scrapes that only returned today\u0027s meetings (tomorrow and later dates came back empty) on some computers. Cloudflare verification is still remembered between runs. - Developer"
+    "id":  "20261103111756",
+    "title":  "v4.1.0 is out",
+    "message":  "Please update now. (1) Fixed the progress bar going past 100% and the scraper getting stuck when a race fails: that meeting is now held back, the others carry on, and it is re-scraped from the start at the end. (2) New popups and a bell icon (top right) tell you when that happens. (3) New \"Race by Race\" tab to download only the races you tick. (4) Exports now save to Downloads\\PUNTERS\\{date}\\{meeting} by default. - Vidusha Mindula"
 }
