@@ -94,9 +94,7 @@ public sealed partial class MainViewModel : ObservableObject
         foreach (var option in CountryOptions) option.SelectionChanged += RecomputeCountryCodeFilter;
 
         _ = CheckForUpdatesAsync();
-        _ = CheckForDeveloperNoticeAsync();
-
-        _autoScrapeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        _ = CheckForDeveloperNoticeAsync();        _autoScrapeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
         _autoScrapeTimer.Tick += (_, _) => _ = AutoScrapeTickAsync();
         _autoScrapeTimer.Start();
     }
@@ -458,6 +456,8 @@ public sealed partial class MainViewModel : ObservableObject
         StopCommand.NotifyCanExecuteChanged();
         ClearResultsCommand.NotifyCanExecuteChanged();
         ContinueCommand.NotifyCanExecuteChanged();
+        SearchRaceMeetingsCommand.NotifyCanExecuteChanged();
+        StartRaceDownloadCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>Moves a meeting higher in <see cref="Meetings"/> — since the race-scrape loop in
@@ -868,8 +868,32 @@ public sealed partial class MainViewModel : ObservableObject
             !r.UploadedToS3 ||
             (AutoExportAfterScrape && !string.IsNullOrWhiteSpace(DownloadFolder) && !r.ExportedLocally) ||
             (_settings.PublishesToRabbitMq && !r.EventPublished);
-        bool RowIsFullyDone(MeetingRow r) =>
-            r.Meeting.Events.All(e => e.Id is not null && _raceDetails.ContainsKey(e.Id)) && !RowNeedsUploadOrExport(r);
+
+        // A race that fails (or comes back without a race id) never lands in _raceDetails. Without
+        // a cap on passes, the Phase 2 loop below kept re-picking the same meeting and re-running
+        // its failed races forever — the progress bar climbing past 100% (400%, 700%, ...) and the
+        // run never moving on to the next meeting. Instead, a meeting with any failed race is held
+        // back (not uploaded/exported/published), the rest of the meetings carry on, and once
+        // they're done it's scraped again from the start. Each meeting gets at most this many full
+        // passes (the first plus retries); after that it's delivered with whichever races did
+        // succeed, so one permanently broken race can't block it forever.
+        const int MaxMeetingAttempts = 3;
+        var incompleteMeetingCount = 0;
+
+        bool RowComplete(MeetingRow r) =>
+            r.Meeting.Events.All(e => e.Id is not null && _raceDetails.ContainsKey(e.Id));
+        bool RowNeedsScrape(MeetingRow r) => !RowComplete(r) && r.ScrapeAttempts < MaxMeetingAttempts;
+        bool RowIsDone(MeetingRow r) => !RowNeedsUploadOrExport(r);
+        // Scraped at least once, still missing races, retries left: waits for its turn at the end.
+        bool RowIsDeferred(MeetingRow r) => r.ScrapeAttempts > 0 && RowNeedsScrape(r);
+        string MissingRaceList(MeetingRow r) => string.Join(", ", r.Meeting.Events
+            .Where(e => e.Id is null || !_raceDetails.ContainsKey(e.Id))
+            .OrderBy(e => e.EventNumber)
+            .Select(e => $"R{e.EventNumber}"));
+
+        // The retry round the VPN location was last changed for (0 = none yet this call), so it's
+        // changed once at the start of each round of retries rather than before every meeting.
+        var lastVpnRotatedRound = 0;
 
         try
         {
@@ -961,20 +985,63 @@ public sealed partial class MainViewModel : ObservableObject
             while (true)
             {
                 token.ThrowIfCancellationRequested();
-                var row = Meetings.FirstOrDefault(r => !RowIsFullyDone(r));
+                // Meetings waiting for a retry come last — only once nothing else is left do they
+                // get their second (and third) go, fewest attempts first so each round of retries
+                // finishes before the next one starts.
+                var row = Meetings.FirstOrDefault(r => !RowIsDone(r) && !RowIsDeferred(r))
+                          ?? Meetings.Where(r => !RowIsDone(r)).OrderBy(r => r.ScrapeAttempts).FirstOrDefault();
                 if (row is null) break;
 
                 var discipline = row.DisciplineEnum;
 
-                // Only races this meeting doesn't already have detail for — on a fresh run
-                // that's all of them, on a resume it's whatever didn't finish (or was never
-                // reached) before the previous Stop.
-                var pendingEvents = row.Meeting.Events
-                    .Where(e => e.Id is null || !_raceDetails.ContainsKey(e.Id))
-                    .ToList();
-
-                if (pendingEvents.Count > 0)
+                if (RowNeedsScrape(row))
                 {
+                    var isRetry = row.ScrapeAttempts > 0;
+
+                    // First pass: only races this meeting doesn't already have detail for — all of
+                    // them on a fresh run, or whatever didn't finish before a Stop on a resume.
+                    // Retry: the whole meeting again from the start. What the earlier pass got is set
+                    // aside and put back for any race that fails again, so a retry can't leave the
+                    // meeting with less than it had.
+                    var previousDetails = new Dictionary<string, RaceDetail>();
+                    List<RaceEvent> pendingEvents;
+                    if (isRetry)
+                    {
+                        // Every other meeting is done by now, so nothing is waiting on the
+                        // connection: change the VPN location before the first retry of this round.
+                        // If it can't be changed, retry on the current connection rather than give up.
+                        if (row.ScrapeAttempts > lastVpnRotatedRound)
+                        {
+                            lastVpnRotatedRound = row.ScrapeAttempts;
+                            progress.Report("[VPN] Changing the VPN location before retrying the meeting(s) that had failed races...");
+                            if (!await VpnRotator.RotateAsync(progress, token))
+                            {
+                                Notify("Couldn't change the VPN location",
+                                    "The VPN location could not be changed, so the failed meeting(s) are being retried on the current connection.");
+                            }
+                        }
+
+                        pendingEvents = row.Meeting.Events.ToList();
+                        foreach (var e in pendingEvents)
+                        {
+                            if (e.Id is not null && _raceDetails.Remove(e.Id, out var old)) previousDetails[e.Id] = old;
+                        }
+                        row.RacesWithDetail = 0;
+                        row.Note = $"Retrying (attempt {row.ScrapeAttempts + 1}/{MaxMeetingAttempts})";
+                        progress.Report(
+                            $"[P-{discipline.Code()}] Retrying {row.MeetingName} from the start (attempt {row.ScrapeAttempts + 1}/{MaxMeetingAttempts}).");
+                    }
+                    else
+                    {
+                        pendingEvents = row.Meeting.Events
+                            .Where(e => e.Id is null || !_raceDetails.ContainsKey(e.Id))
+                            .ToList();
+                    }
+
+                    // Races that already have detail (from before a Stop) count as processed, so
+                    // the bar starts from there and can't overshoot on a resume.
+                    row.RacesProcessed = row.RaceCount - pendingEvents.Count;
+
                     // Races within a meeting are scraped several at a time (see raceConcurrency
                     // below), each in its own tab. This used to be strictly sequential: each
                     // race's full past-run history only arrives via a scroll-triggered lazy load
@@ -1016,7 +1083,50 @@ public sealed partial class MainViewModel : ObservableObject
                             raceConcurrencyLimiter.Release();
                         }
                     });
-                    await Task.WhenAll(raceTasks);
+                    try
+                    {
+                        await Task.WhenAll(raceTasks);
+                    }
+                    finally
+                    {
+                        foreach (var (id, old) in previousDetails) _raceDetails.TryAdd(id, old);
+                        row.RacesWithDetail = row.Meeting.Events.Count(e => e.Id is not null && _raceDetails.ContainsKey(e.Id));
+                    }
+
+                    row.ScrapeAttempts++;
+                }
+
+                // Any failed race: hold this meeting back (nothing uploaded, exported or published
+                // yet) and move on — it's picked up again after every other meeting is done.
+                if (RowIsDeferred(row))
+                {
+                    var missing = row.RaceCount - row.RacesWithDetail;
+                    row.Note = $"{missing} race(s) failed — retry pending ({row.ScrapeAttempts}/{MaxMeetingAttempts})";
+                    progress.Report(
+                        $"[P-{discipline.Code()}] {row.MeetingName}: {missing} of {row.RaceCount} race(s) failed — " +
+                        "skipping this meeting for now, it'll be scraped again from the start after the others.");
+                    Notify($"{row.MeetingName}: {missing} race(s) failed",
+                        $"{row.MeetingName} ({row.Date:yyyy-MM-dd}): race(s) {MissingRaceList(row)} couldn't be scraped. " +
+                        "The other meetings are carrying on without delay. Once they're done, the VPN location will be changed " +
+                        $"and this meeting will be scraped again from the start (attempt {row.ScrapeAttempts + 1} of {MaxMeetingAttempts}).",
+                        MeetingNotificationKey(row));
+                    continue;
+                }
+
+                if (!RowComplete(row))
+                {
+                    incompleteMeetingCount++;
+                    row.Note = $"Missing {row.RaceCount - row.RacesWithDetail} race(s) after {MaxMeetingAttempts} attempts";
+                    Notify($"{row.MeetingName}: races still missing",
+                        $"{row.MeetingName} ({row.Date:yyyy-MM-dd}) still has race(s) {MissingRaceList(row)} missing after {MaxMeetingAttempts} attempts. " +
+                        "It was delivered with the races that did succeed.");
+                }
+                else
+                {
+                    row.Note = "";
+                    // Every race came through (e.g. on a retry): the earlier "race(s) failed" notices
+                    // for this meeting are out of date, so take them away.
+                    RemoveNotifications(MeetingNotificationKey(row));
                 }
 
                 // Generate this meeting's export file name once (and keep it on the row), so the
@@ -1091,6 +1201,12 @@ public sealed partial class MainViewModel : ObservableObject
                 }
             }
 
+            // Progress<T> delivers its messages to the UI thread asynchronously, so the last
+            // "[P-x] Exported ..." line can still be queued when the final status below is set —
+            // and would then overwrite it (the final "Done..." / missing-races summary, and the
+            // Auto Scraper's "Last run" line copied from it). Let anything queued run first.
+            await FlushProgressAsync();
+
             if (_lastResults.Count > 0)
             {
                 var totalDateCount = requests.SelectMany(r => r.Dates).Distinct().Count();
@@ -1105,6 +1221,11 @@ public sealed partial class MainViewModel : ObservableObject
                 StatusText += totalS3FailedCount > 0
                     ? $" Uploaded {totalS3UploadedCount} file(s) to S3 ({totalS3FailedCount} failed — see above)."
                     : $" Uploaded {totalS3UploadedCount} file(s) to S3.";
+
+                if (incompleteMeetingCount > 0)
+                {
+                    StatusText += $" {incompleteMeetingCount} meeting(s) still had missing races after {MaxMeetingAttempts} attempts — delivered as-is, see the Note column.";
+                }
 
                 if (_settings.PublishesToRabbitMq)
                 {
@@ -1140,6 +1261,7 @@ public sealed partial class MainViewModel : ObservableObject
         catch (OperationCanceledException)
         {
             _canResume = true;
+            await FlushProgressAsync();
             StatusText = $"Stopped by user. {Meetings.Count} meeting(s) loaded, " +
                           $"{_raceDetails.Count} race(s) with full runner detail before stopping. " +
                           "Click Continue to pick up where it left off.";
@@ -1156,6 +1278,11 @@ public sealed partial class MainViewModel : ObservableObject
             _cts = null;
         }
     }
+
+    /// <summary>Lets progress messages already queued for the UI thread run, so a status set right
+    /// after this isn't overwritten by an older message arriving late.</summary>
+    private static async Task FlushProgressAsync() =>
+        await Dispatcher.Yield(DispatcherPriority.Background);
 
     /// <summary>Splits a comma/whitespace-separated ISO2 list (e.g. "AU, NZ") into its codes.
     /// Blank input yields an empty set, meaning "no filter — all countries".</summary>
@@ -1261,14 +1388,25 @@ public sealed partial class MainViewModel : ObservableObject
     /// export during a live scrape passes false, since S3 upload there is handled independently
     /// (see <see cref="UploadMeetingToS3Async"/>) to avoid uploading the same file twice; only the
     /// manual "Export JSON..." button passes true.</param>
-    private async Task<ExportResult> ExportMeetingAsync(Discipline discipline, string group, Meeting meeting, string targetFolder, bool uploadToS3)
+    /// <param name="details">Race detail to write out, keyed by raceId. Defaults to the main
+    /// scraper's <see cref="_raceDetails"/>; the Race by Race tab passes its own so the two never
+    /// mix.</param>
+    private async Task<ExportResult> ExportMeetingAsync(
+        Discipline discipline, string group, Meeting meeting, string targetFolder, bool uploadToS3,
+        IReadOnlyDictionary<string, RaceDetail>? details = null)
     {
+        details ??= _raceDetails;
         var fileCount = 0;
         var s3UploadedCount = 0;
         var s3FailedCount = 0;
 
         var meetingFolderName = Slugify(meeting.Slug ?? meeting.Name ?? meeting.Id ?? "meeting");
-        var meetingFolder = Path.Combine(targetFolder, meetingFolderName);
+        // {targetFolder}\{meeting date}\{meeting}. The date is the meeting's own local race date
+        // (not the scrape date), so a re-scrape of the same meeting lands in the same folder.
+        var dateFolderName = DateOnly.TryParse(meeting.MeetingDateLocal, out var meetingDate)
+            ? meetingDate.ToString("yyyy-MM-dd")
+            : DateTime.Today.ToString("yyyy-MM-dd");
+        var meetingFolder = Path.Combine(targetFolder, dateFolderName, meetingFolderName);
         Directory.CreateDirectory(meetingFolder);
 
         // Required top-level shape for TroyenRaceIngestor: data.meetingsGrouped[].{group,meetings[]}.
@@ -1291,7 +1429,7 @@ public sealed partial class MainViewModel : ObservableObject
 
         foreach (var raceEvent in meeting.Events)
         {
-            if (raceEvent.Id is null || !_raceDetails.TryGetValue(raceEvent.Id, out var detail))
+            if (raceEvent.Id is null || !details.TryGetValue(raceEvent.Id, out var detail))
                 continue;
 
             if (await WriteAndMaybeUploadAsync(meetingFolder, meetingFolderName, DataDumpFileName(detail.RaceNumber), detail, uploadToS3))

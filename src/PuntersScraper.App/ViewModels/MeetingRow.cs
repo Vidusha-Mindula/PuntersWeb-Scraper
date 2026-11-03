@@ -44,9 +44,17 @@ public sealed partial class MeetingRow : ObservableObject
 
     /// <summary>0-100. RacesProcessed/RaceCount — a meeting with no races reads as fully done
     /// rather than 0%.</summary>
-    public int ProgressPercent => RaceCount == 0 ? 100 : (int)Math.Round(100.0 * RacesProcessed / RaceCount);
+    public int ProgressPercent => RaceCount == 0 ? 100 : Math.Min(100, (int)Math.Round(100.0 * RacesProcessed / RaceCount));
 
     partial void OnRacesProcessedChanged(int value) => OnPropertyChanged(nameof(ProgressPercent));
+
+    /// <summary>Full passes made over this meeting's races so far (the first scrape plus any
+    /// retries after a failed race). Kept on the row so it survives Stop/Continue.</summary>
+    public int ScrapeAttempts { get; set; }
+
+    /// <summary>Short status shown in the grid — e.g. a retry is pending, or races are still missing.</summary>
+    [ObservableProperty]
+    private string note = "";
 
     /// <summary>Set once this meeting's S3 upload has actually run — lets
     /// <see cref="MainViewModel"/>'s race-scrape loop tell "already uploaded" apart from "not due

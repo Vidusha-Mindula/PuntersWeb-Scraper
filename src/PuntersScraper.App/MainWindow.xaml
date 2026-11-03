@@ -24,6 +24,7 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
             <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
@@ -46,6 +47,106 @@
                 <components:ScraperBotIndicator HorizontalAlignment="Left" VerticalAlignment="Center"
                                                  IsActive="{Binding IsBusy}"
                                                  TrackWidth="{Binding ActualWidth, ElementName=MascotTrack}" />
+            </Grid>
+
+            <!-- Notification section (top-right): the bell shows how many unseen notifications
+                 there are; clicking it lists them, and clicking one shows its message in a popup. -->
+            <Grid Grid.Column="2" VerticalAlignment="Center" Margin="12,0,0,0">
+                <ToggleButton x:Name="NotificationBellToggle" Width="42" Height="36" Padding="0"
+                              IsChecked="{Binding IsNotificationPanelOpen, Mode=TwoWay}"
+                              ToolTip="Notifications">
+                    <Grid>
+                        <TextBlock Text="🔔" FontSize="17" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <Border Background="#E5484D" CornerRadius="8" MinWidth="16" Height="16" Padding="4,0"
+                                HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-14,-12,0"
+                                Visibility="{Binding HasUnreadNotifications, Converter={StaticResource BoolToVisibility}}">
+                            <TextBlock Text="{Binding UnreadNotificationBadge}" FontSize="10" FontWeight="Bold" Foreground="White"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </Grid>
+                </ToggleButton>
+
+                <Popup PlacementTarget="{Binding ElementName=NotificationBellToggle}" IsOpen="{Binding IsNotificationPanelOpen, Mode=TwoWay}"
+                       StaysOpen="False" AllowsTransparency="True" Placement="Bottom" HorizontalOffset="-300" VerticalOffset="6" PopupAnimation="Fade">
+                    <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1"
+                            CornerRadius="8" Padding="12" Width="342">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,8">
+                                <TextBlock Text="Notifications" FontWeight="Bold" VerticalAlignment="Center" />
+                                <Button Content="Clear all" Width="80" Height="26" Padding="0" HorizontalAlignment="Right"
+                                        Style="{StaticResource SecondaryButton}" Command="{Binding ClearNotificationsCommand}" />
+                            </Grid>
+
+                            <TextBlock Text="No notifications." Foreground="{StaticResource SubtleTextBrush}" Margin="0,6,0,6">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasNotifications}" Value="False">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+
+                            <ScrollViewer MaxHeight="340" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding Notifications}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Margin="0,0,0,6" Cursor="Hand" FontWeight="Normal"
+                                                    Command="{Binding DataContext.OpenNotificationCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                    CommandParameter="{Binding}"
+                                                    ToolTip="Click to read this message">
+                                                <!-- Own template: the shared button styles centre their content, which would
+                                                     push short messages to the middle of the row. -->
+                                                <Button.Template>
+                                                    <ControlTemplate TargetType="Button">
+                                                        <Border x:Name="Bd" Background="{StaticResource ControlBrush}" BorderBrush="{StaticResource BorderBrush2}"
+                                                                BorderThickness="1" CornerRadius="6" Padding="10,8">
+                                                            <ContentPresenter />
+                                                        </Border>
+                                                        <ControlTemplate.Triggers>
+                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource ControlHoverBrush}" />
+                                                            </Trigger>
+                                                        </ControlTemplate.Triggers>
+                                                    </ControlTemplate>
+                                                </Button.Template>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="14" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Ellipse Grid.Column="0" Width="8" Height="8" Fill="#E5484D" VerticalAlignment="Top" Margin="0,5,0,0">
+                                                        <Ellipse.Style>
+                                                            <Style TargetType="Ellipse">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsRead}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Hidden" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Ellipse.Style>
+                                                    </Ellipse>
+                                                    <StackPanel Grid.Column="1">
+                                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding Message}" FontSize="11.5" Foreground="{StaticResource SubtleTextBrush}"
+                                                                   TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+                                                    </StackPanel>
+                                                    <TextBlock Grid.Column="2" Text="{Binding TimeText}" FontSize="11" Foreground="{StaticResource SubtleTextBrush}"
+                                                               Margin="10,0,0,0" VerticalAlignment="Top" />
+                                                </Grid>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </StackPanel>
+                    </Border>
+                </Popup>
             </Grid>
         </Grid>
 
@@ -175,7 +276,7 @@
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <TextBlock Text="Download folder" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
                                 <TextBox Text="{Binding DownloadFolder}" Width="340" IsReadOnly="True" Margin="0,0,8,0"
-                                         ToolTip="Default folder Export JSON opens to, and that auto-export (if enabled) writes to directly." />
+                                         ToolTip="Root folder for exports (default: Downloads\PUNTERS). Files are saved to {date}\{meeting} inside it — by Export JSON and by auto-export (if enabled)." />
                                 <Button Content="Browse..." Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding BrowseDownloadFolderCommand}" Margin="0,0,24,0" />
 
                                 <CheckBox Content="Auto-export JSON after scrape" IsChecked="{Binding AutoExportAfterScrape}" VerticalAlignment="Center" Margin="0,0,24,0"
@@ -227,7 +328,7 @@
                                 <DataGridTextColumn Header="Date" Binding="{Binding Date, StringFormat=yyyy-MM-dd}" Width="90" />
                                 <DataGridTextColumn Header="Discipline" Binding="{Binding Discipline}" Width="80" />
                                 <DataGridTextColumn Header="Group" Binding="{Binding Group}" Width="110" />
-                                <DataGridTextColumn Header="Meeting" Binding="{Binding MeetingName}" Width="*" />
+                                <DataGridTextColumn Header="Meeting" Binding="{Binding MeetingName}" Width="*" MinWidth="130" />
                                 <DataGridTextColumn Header="State" Binding="{Binding State}" Width="60" />
                                 <DataGridTextColumn Header="Country" Binding="{Binding Country}" Width="70" />
                                 <DataGridTextColumn Header="Races" Binding="{Binding RaceCount}" Width="55" />
@@ -235,6 +336,7 @@
                                 <DataGridTextColumn Header="First Race" Binding="{Binding FirstRaceLocalTime}" Width="90" />
                                 <DataGridTextColumn Header="Track" Binding="{Binding TrackCondition}" Width="80" />
                                 <DataGridTextColumn Header="Stage" Binding="{Binding MeetingStage}" Width="100" />
+                                <DataGridTextColumn Header="Note" Binding="{Binding Note}" Width="*" MinWidth="130" />
                                 <DataGridTemplateColumn Header="Progress" Width="130">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
@@ -406,11 +508,12 @@
                                 <DataGridTextColumn Header="Date" Binding="{Binding Date, StringFormat=yyyy-MM-dd}" Width="90" />
                                 <DataGridTextColumn Header="Discipline" Binding="{Binding Discipline}" Width="80" />
                                 <DataGridTextColumn Header="Group" Binding="{Binding Group}" Width="110" />
-                                <DataGridTextColumn Header="Meeting" Binding="{Binding MeetingName}" Width="*" />
+                                <DataGridTextColumn Header="Meeting" Binding="{Binding MeetingName}" Width="*" MinWidth="130" />
                                 <DataGridTextColumn Header="State" Binding="{Binding State}" Width="60" />
                                 <DataGridTextColumn Header="Country" Binding="{Binding Country}" Width="70" />
                                 <DataGridTextColumn Header="Races" Binding="{Binding RaceCount}" Width="55" />
                                 <DataGridTextColumn Header="Detail" Binding="{Binding RacesWithDetail}" Width="55" />
+                                <DataGridTextColumn Header="Note" Binding="{Binding Note}" Width="*" MinWidth="130" />
                                 <DataGridTemplateColumn Header="Progress" Width="130">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
@@ -445,6 +548,132 @@
                         <Button Grid.Column="3" Content="Clear" Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding ClearResultsCommand}" Margin="0,0,14,0"
                                 ToolTip="Clears the grid and status below — only available once nothing is running." />
                         <ProgressBar Grid.Column="4" Width="180" IsIndeterminate="{Binding IsBusy}"
+                                     Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Race by Race">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Search card: lists meetings only (no per-race scraping), so the races to
+                         download can be picked afterwards. Browser choice, Headless and the
+                         download folder are shared with the Scraper tab. -->
+                    <Border Grid.Row="0" Background="{StaticResource PanelBrush}" CornerRadius="10"
+                            BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1" Padding="16,14" Margin="0,4,0,14">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12" VerticalAlignment="Center">
+                                <TextBlock Text="Date" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
+                                <DatePicker SelectedDate="{Binding RaceSearchDate}" Width="130" Margin="0,0,24,0"
+                                            CalendarStyle="{StaticResource DarkCalendarStyle}" />
+
+                                <CheckBox Content="Horses (T)" IsChecked="{Binding RaceSearchHorses}" Margin="0,0,18,0" VerticalAlignment="Center" />
+                                <CheckBox Content="Greyhounds (G)" IsChecked="{Binding RaceSearchGreyhounds}" Margin="0,0,18,0" VerticalAlignment="Center" />
+                                <CheckBox Content="Harness (H)" IsChecked="{Binding RaceSearchHarness}" Margin="0,0,24,0" VerticalAlignment="Center" />
+
+                                <TextBlock Text="Meeting" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
+                                <TextBox Text="{Binding RaceSearchCourse, UpdateSourceTrigger=PropertyChanged}" Width="170" Margin="0,0,24,0"
+                                         ToolTip="Optional. Only list meetings whose name contains this text, e.g. Belmont. Leave blank for all meetings." />
+
+                                <Button Content="Search" Width="110" Style="{StaticResource PrimaryButton}" Command="{Binding SearchRaceMeetingsCommand}"
+                                        ToolTip="Lists every meeting (and its races) for the date, discipline(s) and meeting name — nothing is downloaded yet." />
+                            </StackPanel>
+
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="Download folder" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
+                                <TextBox Text="{Binding DownloadFolder}" Width="340" IsReadOnly="True" Margin="0,0,8,0"
+                                         ToolTip="Races are saved to {date}\{meeting} inside this folder. Same folder as on the Scraper tab." />
+                                <Button Content="Browse..." Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding BrowseDownloadFolderCommand}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Meetings, each with an expander of its races -->
+                    <Border Grid.Row="1" Background="{StaticResource PanelBrush}" CornerRadius="10"
+                            BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1" Margin="0,0,0,14" ClipToBounds="True">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="12,10,12,6" VerticalAlignment="Center">
+                                <Button Content="Select all" Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding SelectAllRacesCommand}" Margin="0,0,8,0" />
+                                <Button Content="Clear" Width="70" Style="{StaticResource SecondaryButton}" Command="{Binding ClearRaceSelectionCommand}" Margin="0,0,20,0" />
+                                <Button Content="Expand all" Width="110" Style="{StaticResource SecondaryButton}" Command="{Binding ExpandAllRaceMeetingsCommand}" Margin="0,0,8,0" />
+                                <Button Content="Collapse all" Width="120" Style="{StaticResource SecondaryButton}" Command="{Binding CollapseAllRaceMeetingsCommand}" Margin="0,0,20,0" />
+                                <TextBlock Text="{Binding RaceSelectionSummary}" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" />
+                            </StackPanel>
+
+                            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="12,0,12,8">
+                                <ItemsControl ItemsSource="{Binding RaceMeetings}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Expander IsExpanded="{Binding IsExpanded, Mode=TwoWay}" Margin="0,0,0,8">
+                                                <Expander.Header>
+                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <CheckBox IsThreeState="True" IsChecked="{Binding AllSelected}" VerticalAlignment="Center"
+                                                                  ToolTip="Select or clear every race in this meeting" />
+                                                        <TextBlock Text="{Binding MeetingName}" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center" />
+                                                        <TextBlock Text="{Binding State, StringFormat=' · {0}'}" Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center" />
+                                                        <TextBlock Text="{Binding Country, StringFormat=' · {0}'}" Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center" />
+                                                        <TextBlock Text="{Binding Discipline, StringFormat=' · {0}'}" Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center" />
+                                                        <TextBlock Text="{Binding RaceCount, StringFormat=' · {0} races'}" Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center" />
+                                                        <TextBlock Text="{Binding SelectedSummary, StringFormat=' · {0}'}" Foreground="{StaticResource AccentHoverBrush}" VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                </Expander.Header>
+
+                                                <ItemsControl ItemsSource="{Binding Races}" Margin="0,4,0,0">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Grid Margin="4,3">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="28" />
+                                                                    <ColumnDefinition Width="50" />
+                                                                    <ColumnDefinition Width="80" />
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="80" />
+                                                                    <ColumnDefinition Width="220" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected}" VerticalAlignment="Center" />
+                                                                <TextBlock Grid.Column="1" Text="{Binding RaceNumber, StringFormat='R{0}'}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                                                <TextBlock Grid.Column="2" Text="{Binding StartTimeLocal}" Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center" />
+                                                                <TextBlock Grid.Column="3" Text="{Binding RaceName}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                                                <TextBlock Grid.Column="4" Text="{Binding Distance, StringFormat='{}{0}m'}" Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center" />
+                                                                <TextBlock Grid.Column="5" Text="{Binding Status}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Status}"
+                                                                           Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center" />
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </Expander>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Grid>
+                    </Border>
+
+                    <!-- Status bar -->
+                    <Grid Grid.Row="2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="180" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding StatusText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                   Foreground="{StaticResource SubtleTextBrush}" />
+                        <Button Grid.Column="1" Content="Start" Width="110" Style="{StaticResource PrimaryButton}" Command="{Binding StartRaceDownloadCommand}" Margin="0,0,10,0"
+                                ToolTip="Downloads only the races ticked above — full runner/jockey/form detail — into the download folder." />
+                        <Button Grid.Column="2" Content="Stop" Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding StopCommand}" Margin="0,0,14,0"
+                                ToolTip="Cancels the running search or download as soon as the current in-flight request finishes. Races already downloaded are still saved." />
+                        <ProgressBar Grid.Column="3" Width="180" IsIndeterminate="{Binding IsBusy}"
                                      Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
                     </Grid>
                 </Grid>
@@ -508,5 +737,37 @@
                 <components:BucketView />
             </TabItem>
         </TabControl>
+
+        <!-- Popups: top-right, over everything else (declared last). Each stays 30 seconds, then
+             moves to the notification list; the ✕ closes it early. The list itself has no
+             background, so it never blocks clicks on the page underneath. -->
+        <ItemsControl Grid.Row="0" Grid.RowSpan="4" ItemsSource="{Binding ToastNotifications}"
+                      HorizontalAlignment="Right" VerticalAlignment="Top" Width="380" Margin="0,56,0,0">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource AccentBrush}" BorderThickness="1"
+                            CornerRadius="10" Padding="14,12" Margin="0,0,0,10">
+                        <Border.Effect>
+                            <DropShadowEffect BlurRadius="18" ShadowDepth="3" Opacity="0.5" />
+                        </Border.Effect>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="{Binding Title}" FontWeight="Bold" Foreground="{StaticResource AccentHoverBrush}" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding Message}" TextWrapping="Wrap" Margin="0,6,0,0" />
+                                <TextBlock Text="{Binding TimeText}" FontSize="11" Foreground="{StaticResource SubtleTextBrush}" Margin="0,8,0,0" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="✕" Width="26" Height="26" Padding="0" VerticalAlignment="Top" Margin="10,0,0,0"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Command="{Binding DataContext.DismissToastCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                    CommandParameter="{Binding}" ToolTip="Close" />
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
     </Grid>
 </Window>
