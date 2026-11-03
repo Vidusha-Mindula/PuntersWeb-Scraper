@@ -450,6 +450,132 @@
                 </Grid>
             </TabItem>
 
+            <TabItem Header="Race by Race">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Search card: lists meetings only (no per-race scraping), so the races to
+                         download can be picked afterwards. Browser choice, Headless and the
+                         download folder are shared with the Scraper tab. -->
+                    <Border Grid.Row="0" Background="{StaticResource PanelBrush}" CornerRadius="10"
+                            BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1" Padding="16,14" Margin="0,4,0,14">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12" VerticalAlignment="Center">
+                                <TextBlock Text="Date" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
+                                <DatePicker SelectedDate="{Binding RaceSearchDate}" Width="130" Margin="0,0,24,0"
+                                            CalendarStyle="{StaticResource DarkCalendarStyle}" />
+
+                                <CheckBox Content="Horses (T)" IsChecked="{Binding RaceSearchHorses}" Margin="0,0,18,0" VerticalAlignment="Center" />
+                                <CheckBox Content="Greyhounds (G)" IsChecked="{Binding RaceSearchGreyhounds}" Margin="0,0,18,0" VerticalAlignment="Center" />
+                                <CheckBox Content="Harness (H)" IsChecked="{Binding RaceSearchHarness}" Margin="0,0,24,0" VerticalAlignment="Center" />
+
+                                <TextBlock Text="Meeting" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
+                                <TextBox Text="{Binding RaceSearchCourse, UpdateSourceTrigger=PropertyChanged}" Width="170" Margin="0,0,24,0"
+                                         ToolTip="Optional. Only list meetings whose name contains this text, e.g. Belmont. Leave blank for all meetings." />
+
+                                <Button Content="Search" Width="110" Style="{StaticResource PrimaryButton}" Command="{Binding SearchRaceMeetingsCommand}"
+                                        ToolTip="Lists every meeting (and its races) for the date, discipline(s) and meeting name — nothing is downloaded yet." />
+                            </StackPanel>
+
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="Download folder" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" Margin="0,0,8,0" />
+                                <TextBox Text="{Binding DownloadFolder}" Width="340" IsReadOnly="True" Margin="0,0,8,0"
+                                         ToolTip="Races are saved to {date}\{meeting} inside this folder. Same folder as on the Scraper tab." />
+                                <Button Content="Browse..." Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding BrowseDownloadFolderCommand}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Meetings, each with an expander of its races -->
+                    <Border Grid.Row="1" Background="{StaticResource PanelBrush}" CornerRadius="10"
+                            BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1" Margin="0,0,0,14" ClipToBounds="True">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="12,10,12,6" VerticalAlignment="Center">
+                                <Button Content="Select all" Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding SelectAllRacesCommand}" Margin="0,0,8,0" />
+                                <Button Content="Clear" Width="70" Style="{StaticResource SecondaryButton}" Command="{Binding ClearRaceSelectionCommand}" Margin="0,0,20,0" />
+                                <Button Content="Expand all" Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding ExpandAllRaceMeetingsCommand}" Margin="0,0,8,0" />
+                                <Button Content="Collapse all" Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding CollapseAllRaceMeetingsCommand}" Margin="0,0,20,0" />
+                                <TextBlock Text="{Binding RaceSelectionSummary}" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" />
+                            </StackPanel>
+
+                            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="12,0,12,8">
+                                <ItemsControl ItemsSource="{Binding RaceMeetings}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Expander IsExpanded="{Binding IsExpanded, Mode=TwoWay}" Margin="0,0,0,8">
+                                                <Expander.Header>
+                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <CheckBox IsThreeState="True" IsChecked="{Binding AllSelected}" VerticalAlignment="Center"
+                                                                  ToolTip="Select or clear every race in this meeting" />
+                                                        <TextBlock Text="{Binding MeetingName}" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center" />
+                                                        <TextBlock Text="{Binding State, StringFormat=' · {0}'}" Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center" />
+                                                        <TextBlock Text="{Binding Country, StringFormat=' · {0}'}" Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center" />
+                                                        <TextBlock Text="{Binding Discipline, StringFormat=' · {0}'}" Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center" />
+                                                        <TextBlock Text="{Binding RaceCount, StringFormat=' · {0} races'}" Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center" />
+                                                        <TextBlock Text="{Binding SelectedSummary, StringFormat=' · {0}'}" Foreground="{StaticResource AccentHoverBrush}" VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                </Expander.Header>
+
+                                                <ItemsControl ItemsSource="{Binding Races}" Margin="0,4,0,0">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Grid Margin="4,3">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="28" />
+                                                                    <ColumnDefinition Width="50" />
+                                                                    <ColumnDefinition Width="80" />
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="80" />
+                                                                    <ColumnDefinition Width="220" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected}" VerticalAlignment="Center" />
+                                                                <TextBlock Grid.Column="1" Text="{Binding RaceNumber, StringFormat='R{0}'}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                                                <TextBlock Grid.Column="2" Text="{Binding StartTimeLocal}" Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center" />
+                                                                <TextBlock Grid.Column="3" Text="{Binding RaceName}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                                                <TextBlock Grid.Column="4" Text="{Binding Distance, StringFormat='{}{0}m'}" Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center" />
+                                                                <TextBlock Grid.Column="5" Text="{Binding Status}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Status}"
+                                                                           Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center" />
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </Expander>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Grid>
+                    </Border>
+
+                    <!-- Status bar -->
+                    <Grid Grid.Row="2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="180" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding StatusText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                   Foreground="{StaticResource SubtleTextBrush}" />
+                        <Button Grid.Column="1" Content="Start" Width="110" Style="{StaticResource PrimaryButton}" Command="{Binding StartRaceDownloadCommand}" Margin="0,0,10,0"
+                                ToolTip="Downloads only the races ticked above — full runner/jockey/form detail — into the download folder." />
+                        <Button Grid.Column="2" Content="Stop" Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding StopCommand}" Margin="0,0,14,0"
+                                ToolTip="Cancels the running search or download as soon as the current in-flight request finishes. Races already downloaded are still saved." />
+                        <ProgressBar Grid.Column="3" Width="180" IsIndeterminate="{Binding IsBusy}"
+                                     Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
+                    </Grid>
+                </Grid>
+            </TabItem>
+
             <TabItem Header="Browser">
                 <StackPanel Margin="0,4,0,0">
                     <Border Background="{StaticResource PanelBrush}" CornerRadius="10" BorderBrush="{StaticResource BorderBrush2}"

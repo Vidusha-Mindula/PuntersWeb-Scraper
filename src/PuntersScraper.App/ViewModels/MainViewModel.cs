@@ -458,6 +458,8 @@ public sealed partial class MainViewModel : ObservableObject
         StopCommand.NotifyCanExecuteChanged();
         ClearResultsCommand.NotifyCanExecuteChanged();
         ContinueCommand.NotifyCanExecuteChanged();
+        SearchRaceMeetingsCommand.NotifyCanExecuteChanged();
+        StartRaceDownloadCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>Moves a meeting higher in <see cref="Meetings"/> — since the race-scrape loop in
@@ -1276,8 +1278,14 @@ public sealed partial class MainViewModel : ObservableObject
     /// export during a live scrape passes false, since S3 upload there is handled independently
     /// (see <see cref="UploadMeetingToS3Async"/>) to avoid uploading the same file twice; only the
     /// manual "Export JSON..." button passes true.</param>
-    private async Task<ExportResult> ExportMeetingAsync(Discipline discipline, string group, Meeting meeting, string targetFolder, bool uploadToS3)
+    /// <param name="details">Race detail to write out, keyed by raceId. Defaults to the main
+    /// scraper's <see cref="_raceDetails"/>; the Race by Race tab passes its own so the two never
+    /// mix.</param>
+    private async Task<ExportResult> ExportMeetingAsync(
+        Discipline discipline, string group, Meeting meeting, string targetFolder, bool uploadToS3,
+        IReadOnlyDictionary<string, RaceDetail>? details = null)
     {
+        details ??= _raceDetails;
         var fileCount = 0;
         var s3UploadedCount = 0;
         var s3FailedCount = 0;
@@ -1311,7 +1319,7 @@ public sealed partial class MainViewModel : ObservableObject
 
         foreach (var raceEvent in meeting.Events)
         {
-            if (raceEvent.Id is null || !_raceDetails.TryGetValue(raceEvent.Id, out var detail))
+            if (raceEvent.Id is null || !details.TryGetValue(raceEvent.Id, out var detail))
                 continue;
 
             if (await WriteAndMaybeUploadAsync(meetingFolder, meetingFolderName, DataDumpFileName(detail.RaceNumber), detail, uploadToS3))

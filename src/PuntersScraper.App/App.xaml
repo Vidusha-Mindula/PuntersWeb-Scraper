@@ -326,9 +326,14 @@
                                     Background="{StaticResource ControlBrush}"
                                     BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1"
                                     VerticalAlignment="Center">
-                                <Path x:Name="Check" Data="M2,7 L6,11 L14,2" Stroke="#0B0B0C" StrokeThickness="2.2"
-                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
-                                      Visibility="Collapsed" Stretch="Uniform" Margin="2" />
+                                <Grid>
+                                    <Path x:Name="Check" Data="M2,7 L6,11 L14,2" Stroke="#0B0B0C" StrokeThickness="2.2"
+                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                          Visibility="Collapsed" Stretch="Uniform" Margin="2" />
+                                    <!-- Shown only for the indeterminate (IsChecked = null) state of a three-state box -->
+                                    <Rectangle x:Name="Dash" Width="8" Height="2" RadiusX="1" RadiusY="1"
+                                               Fill="{StaticResource AccentBrush}" Visibility="Collapsed" />
+                                </Grid>
                             </Border>
                             <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center" />
                         </StackPanel>
@@ -337,6 +342,10 @@
                                 <Setter TargetName="Box" Property="Background" Value="{StaticResource AccentBrush}" />
                                 <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
                                 <Setter TargetName="Check" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="{x:Null}">
+                                <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="Dash" Property="Visibility" Value="Visible" />
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
