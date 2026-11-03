@@ -1198,6 +1198,12 @@ public sealed partial class MainViewModel : ObservableObject
                 }
             }
 
+            // Progress<T> delivers its messages to the UI thread asynchronously, so the last
+            // "[P-x] Exported ..." line can still be queued when the final status below is set —
+            // and would then overwrite it (the final "Done..." / missing-races summary, and the
+            // Auto Scraper's "Last run" line copied from it). Let anything queued run first.
+            await FlushProgressAsync();
+
             if (_lastResults.Count > 0)
             {
                 var totalDateCount = requests.SelectMany(r => r.Dates).Distinct().Count();
@@ -1252,6 +1258,7 @@ public sealed partial class MainViewModel : ObservableObject
         catch (OperationCanceledException)
         {
             _canResume = true;
+            await FlushProgressAsync();
             StatusText = $"Stopped by user. {Meetings.Count} meeting(s) loaded, " +
                           $"{_raceDetails.Count} race(s) with full runner detail before stopping. " +
                           "Click Continue to pick up where it left off.";
@@ -1268,6 +1275,11 @@ public sealed partial class MainViewModel : ObservableObject
             _cts = null;
         }
     }
+
+    /// <summary>Lets progress messages already queued for the UI thread run, so a status set right
+    /// after this isn't overwritten by an older message arriving late.</summary>
+    private static async Task FlushProgressAsync() =>
+        await Dispatcher.Yield(DispatcherPriority.Background);
 
     /// <summary>Splits a comma/whitespace-separated ISO2 list (e.g. "AU, NZ") into its codes.
     /// Blank input yields an empty set, meaning "no filter — all countries".</summary>

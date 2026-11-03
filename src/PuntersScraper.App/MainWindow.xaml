@@ -328,7 +328,7 @@
                                 <DataGridTextColumn Header="Date" Binding="{Binding Date, StringFormat=yyyy-MM-dd}" Width="90" />
                                 <DataGridTextColumn Header="Discipline" Binding="{Binding Discipline}" Width="80" />
                                 <DataGridTextColumn Header="Group" Binding="{Binding Group}" Width="110" />
-                                <DataGridTextColumn Header="Meeting" Binding="{Binding MeetingName}" Width="*" />
+                                <DataGridTextColumn Header="Meeting" Binding="{Binding MeetingName}" Width="*" MinWidth="130" />
                                 <DataGridTextColumn Header="State" Binding="{Binding State}" Width="60" />
                                 <DataGridTextColumn Header="Country" Binding="{Binding Country}" Width="70" />
                                 <DataGridTextColumn Header="Races" Binding="{Binding RaceCount}" Width="55" />
@@ -336,7 +336,7 @@
                                 <DataGridTextColumn Header="First Race" Binding="{Binding FirstRaceLocalTime}" Width="90" />
                                 <DataGridTextColumn Header="Track" Binding="{Binding TrackCondition}" Width="80" />
                                 <DataGridTextColumn Header="Stage" Binding="{Binding MeetingStage}" Width="100" />
-                                <DataGridTextColumn Header="Note" Binding="{Binding Note}" Width="200" />
+                                <DataGridTextColumn Header="Note" Binding="{Binding Note}" Width="*" MinWidth="130" />
                                 <DataGridTemplateColumn Header="Progress" Width="130">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
@@ -508,12 +508,12 @@
                                 <DataGridTextColumn Header="Date" Binding="{Binding Date, StringFormat=yyyy-MM-dd}" Width="90" />
                                 <DataGridTextColumn Header="Discipline" Binding="{Binding Discipline}" Width="80" />
                                 <DataGridTextColumn Header="Group" Binding="{Binding Group}" Width="110" />
-                                <DataGridTextColumn Header="Meeting" Binding="{Binding MeetingName}" Width="*" />
+                                <DataGridTextColumn Header="Meeting" Binding="{Binding MeetingName}" Width="*" MinWidth="130" />
                                 <DataGridTextColumn Header="State" Binding="{Binding State}" Width="60" />
                                 <DataGridTextColumn Header="Country" Binding="{Binding Country}" Width="70" />
                                 <DataGridTextColumn Header="Races" Binding="{Binding RaceCount}" Width="55" />
                                 <DataGridTextColumn Header="Detail" Binding="{Binding RacesWithDetail}" Width="55" />
-                                <DataGridTextColumn Header="Note" Binding="{Binding Note}" Width="200" />
+                                <DataGridTextColumn Header="Note" Binding="{Binding Note}" Width="*" MinWidth="130" />
                                 <DataGridTemplateColumn Header="Progress" Width="130">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
@@ -605,8 +605,8 @@
                             <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="12,10,12,6" VerticalAlignment="Center">
                                 <Button Content="Select all" Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding SelectAllRacesCommand}" Margin="0,0,8,0" />
                                 <Button Content="Clear" Width="70" Style="{StaticResource SecondaryButton}" Command="{Binding ClearRaceSelectionCommand}" Margin="0,0,20,0" />
-                                <Button Content="Expand all" Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding ExpandAllRaceMeetingsCommand}" Margin="0,0,8,0" />
-                                <Button Content="Collapse all" Width="90" Style="{StaticResource SecondaryButton}" Command="{Binding CollapseAllRaceMeetingsCommand}" Margin="0,0,20,0" />
+                                <Button Content="Expand all" Width="110" Style="{StaticResource SecondaryButton}" Command="{Binding ExpandAllRaceMeetingsCommand}" Margin="0,0,8,0" />
+                                <Button Content="Collapse all" Width="120" Style="{StaticResource SecondaryButton}" Command="{Binding CollapseAllRaceMeetingsCommand}" Margin="0,0,20,0" />
                                 <TextBlock Text="{Binding RaceSelectionSummary}" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" />
                             </StackPanel>
 

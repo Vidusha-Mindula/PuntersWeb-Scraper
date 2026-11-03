@@ -280,6 +280,7 @@ public sealed partial class MainViewModel
                 if (cancelled) token.ThrowIfCancellationRequested();
             }
 
+            await FlushProgressAsync();
             StatusText = $"Done. Downloaded {downloaded} race(s) from {meetingFolders} meeting(s) to {DownloadFolder}" +
                          (failed > 0 ? $". {failed} race(s) failed — see the status next to each race." : ".");
             SystemSounds.Asterisk.Play();
@@ -290,6 +291,7 @@ public sealed partial class MainViewModel
                 foreach (var race in races.Where(r => r.Status is "Queued" or "Downloading..."))
                     race.Status = "Stopped";
 
+            await FlushProgressAsync();
             StatusText = $"Stopped by user. Downloaded {downloaded} race(s) before stopping.";
         }
         catch (Exception ex)
