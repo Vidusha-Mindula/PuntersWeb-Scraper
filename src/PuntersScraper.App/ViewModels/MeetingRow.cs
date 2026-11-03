@@ -44,7 +44,7 @@ public sealed partial class MeetingRow : ObservableObject
 
     /// <summary>0-100. RacesProcessed/RaceCount — a meeting with no races reads as fully done
     /// rather than 0%.</summary>
-    public int ProgressPercent => RaceCount == 0 ? 100 : (int)Math.Round(100.0 * RacesProcessed / RaceCount);
+    public int ProgressPercent => RaceCount == 0 ? 100 : Math.Min(100, (int)Math.Round(100.0 * RacesProcessed / RaceCount));
 
     partial void OnRacesProcessedChanged(int value) => OnPropertyChanged(nameof(ProgressPercent));
 

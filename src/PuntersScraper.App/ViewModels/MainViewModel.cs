@@ -868,8 +868,18 @@ public sealed partial class MainViewModel : ObservableObject
             !r.UploadedToS3 ||
             (AutoExportAfterScrape && !string.IsNullOrWhiteSpace(DownloadFolder) && !r.ExportedLocally) ||
             (_settings.PublishesToRabbitMq && !r.EventPublished);
+
+        // Races already tried during this call, success or failure. A race that fails (or comes
+        // back without a race id) never lands in _raceDetails, so without this the Phase 2 loop
+        // below kept re-picking the same meeting and re-running its failed races forever — the
+        // progress bar climbing past 100% (400%, 700%, ...) and the run never moving on to the
+        // next meeting. A failed race is skipped for the rest of this call; a later Continue
+        // starts with an empty set, so it gets another go then.
+        var attemptedEvents = new HashSet<RaceEvent>(ReferenceEqualityComparer.Instance);
+        bool RaceIsSettled(RaceEvent e) =>
+            attemptedEvents.Contains(e) || (e.Id is not null && _raceDetails.ContainsKey(e.Id));
         bool RowIsFullyDone(MeetingRow r) =>
-            r.Meeting.Events.All(e => e.Id is not null && _raceDetails.ContainsKey(e.Id)) && !RowNeedsUploadOrExport(r);
+            r.Meeting.Events.All(RaceIsSettled) && !RowNeedsUploadOrExport(r);
 
         try
         {
@@ -970,11 +980,16 @@ public sealed partial class MainViewModel : ObservableObject
                 // that's all of them, on a resume it's whatever didn't finish (or was never
                 // reached) before the previous Stop.
                 var pendingEvents = row.Meeting.Events
-                    .Where(e => e.Id is null || !_raceDetails.ContainsKey(e.Id))
+                    .Where(e => !RaceIsSettled(e))
                     .ToList();
 
                 if (pendingEvents.Count > 0)
                 {
+                    // Races that already have detail (from before a Stop) count as processed, so
+                    // the bar starts from there and can't overshoot on a resume.
+                    row.RacesProcessed = row.RaceCount - pendingEvents.Count;
+                    foreach (var pending in pendingEvents) attemptedEvents.Add(pending);
+
                     // Races within a meeting are scraped several at a time (see raceConcurrency
                     // below), each in its own tab. This used to be strictly sequential: each
                     // race's full past-run history only arrives via a scroll-triggered lazy load
