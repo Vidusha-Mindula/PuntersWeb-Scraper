@@ -95,7 +95,6 @@ public sealed partial class MainViewModel : ObservableObject
 
         _ = CheckForUpdatesAsync();
         _ = CheckForDeveloperNoticeAsync();
-
         _autoScrapeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
         _autoScrapeTimer.Tick += (_, _) => _ = AutoScrapeTickAsync();
         _autoScrapeTimer.Start();
@@ -888,6 +887,14 @@ public sealed partial class MainViewModel : ObservableObject
         bool RowIsDone(MeetingRow r) => !RowNeedsUploadOrExport(r);
         // Scraped at least once, still missing races, retries left: waits for its turn at the end.
         bool RowIsDeferred(MeetingRow r) => r.ScrapeAttempts > 0 && RowNeedsScrape(r);
+        string MissingRaceList(MeetingRow r) => string.Join(", ", r.Meeting.Events
+            .Where(e => e.Id is null || !_raceDetails.ContainsKey(e.Id))
+            .OrderBy(e => e.EventNumber)
+            .Select(e => $"R{e.EventNumber}"));
+
+        // The retry round the VPN location was last changed for (0 = none yet this call), so it's
+        // changed once at the start of each round of retries rather than before every meeting.
+        var lastVpnRotatedRound = 0;
 
         try
         {
@@ -980,9 +987,10 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 token.ThrowIfCancellationRequested();
                 // Meetings waiting for a retry come last — only once nothing else is left do they
-                // get their second (and third) go.
+                // get their second (and third) go, fewest attempts first so each round of retries
+                // finishes before the next one starts.
                 var row = Meetings.FirstOrDefault(r => !RowIsDone(r) && !RowIsDeferred(r))
-                          ?? Meetings.FirstOrDefault(r => !RowIsDone(r));
+                          ?? Meetings.Where(r => !RowIsDone(r)).OrderBy(r => r.ScrapeAttempts).FirstOrDefault();
                 if (row is null) break;
 
                 var discipline = row.DisciplineEnum;
@@ -1000,6 +1008,20 @@ public sealed partial class MainViewModel : ObservableObject
                     List<RaceEvent> pendingEvents;
                     if (isRetry)
                     {
+                        // Every other meeting is done by now, so nothing is waiting on the
+                        // connection: change the VPN location before the first retry of this round.
+                        // If it can't be changed, retry on the current connection rather than give up.
+                        if (row.ScrapeAttempts > lastVpnRotatedRound)
+                        {
+                            lastVpnRotatedRound = row.ScrapeAttempts;
+                            progress.Report("[VPN] Changing the VPN location before retrying the meeting(s) that had failed races...");
+                            if (!await VpnRotator.RotateAsync(progress, token))
+                            {
+                                Notify("Couldn't change the VPN location",
+                                    "The VPN location could not be changed, so the failed meeting(s) are being retried on the current connection.");
+                            }
+                        }
+
                         pendingEvents = row.Meeting.Events.ToList();
                         foreach (var e in pendingEvents)
                         {
@@ -1084,6 +1106,10 @@ public sealed partial class MainViewModel : ObservableObject
                     progress.Report(
                         $"[P-{discipline.Code()}] {row.MeetingName}: {missing} of {row.RaceCount} race(s) failed — " +
                         "skipping this meeting for now, it'll be scraped again from the start after the others.");
+                    Notify($"{row.MeetingName}: {missing} race(s) failed",
+                        $"{row.MeetingName} ({row.Date:yyyy-MM-dd}): race(s) {MissingRaceList(row)} couldn't be scraped. " +
+                        "The other meetings are carrying on without delay. Once they're done, the VPN location will be changed " +
+                        $"and this meeting will be scraped again from the start (attempt {row.ScrapeAttempts + 1} of {MaxMeetingAttempts}).");
                     continue;
                 }
 
@@ -1091,6 +1117,9 @@ public sealed partial class MainViewModel : ObservableObject
                 {
                     incompleteMeetingCount++;
                     row.Note = $"Missing {row.RaceCount - row.RacesWithDetail} race(s) after {MaxMeetingAttempts} attempts";
+                    Notify($"{row.MeetingName}: races still missing",
+                        $"{row.MeetingName} ({row.Date:yyyy-MM-dd}) still has race(s) {MissingRaceList(row)} missing after {MaxMeetingAttempts} attempts. " +
+                        "It was delivered with the races that did succeed.");
                 }
                 else
                 {

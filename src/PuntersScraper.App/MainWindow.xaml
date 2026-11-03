@@ -24,6 +24,7 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
             <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
@@ -46,6 +47,106 @@
                 <components:ScraperBotIndicator HorizontalAlignment="Left" VerticalAlignment="Center"
                                                  IsActive="{Binding IsBusy}"
                                                  TrackWidth="{Binding ActualWidth, ElementName=MascotTrack}" />
+            </Grid>
+
+            <!-- Notification section (top-right): the bell shows how many unseen notifications
+                 there are; clicking it lists them, and clicking one shows its message in a popup. -->
+            <Grid Grid.Column="2" VerticalAlignment="Center" Margin="12,0,0,0">
+                <ToggleButton x:Name="NotificationBellToggle" Width="42" Height="36" Padding="0"
+                              IsChecked="{Binding IsNotificationPanelOpen, Mode=TwoWay}"
+                              ToolTip="Notifications">
+                    <Grid>
+                        <TextBlock Text="🔔" FontSize="17" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <Border Background="#E5484D" CornerRadius="8" MinWidth="16" Height="16" Padding="4,0"
+                                HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-14,-12,0"
+                                Visibility="{Binding HasUnreadNotifications, Converter={StaticResource BoolToVisibility}}">
+                            <TextBlock Text="{Binding UnreadNotificationBadge}" FontSize="10" FontWeight="Bold" Foreground="White"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </Grid>
+                </ToggleButton>
+
+                <Popup PlacementTarget="{Binding ElementName=NotificationBellToggle}" IsOpen="{Binding IsNotificationPanelOpen, Mode=TwoWay}"
+                       StaysOpen="False" AllowsTransparency="True" Placement="Bottom" HorizontalOffset="-300" VerticalOffset="6" PopupAnimation="Fade">
+                    <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1"
+                            CornerRadius="8" Padding="12" Width="342">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,8">
+                                <TextBlock Text="Notifications" FontWeight="Bold" VerticalAlignment="Center" />
+                                <Button Content="Clear all" Width="80" Height="26" Padding="0" HorizontalAlignment="Right"
+                                        Style="{StaticResource SecondaryButton}" Command="{Binding ClearNotificationsCommand}" />
+                            </Grid>
+
+                            <TextBlock Text="No notifications." Foreground="{StaticResource SubtleTextBrush}" Margin="0,6,0,6">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasNotifications}" Value="False">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+
+                            <ScrollViewer MaxHeight="340" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding Notifications}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Margin="0,0,0,6" Cursor="Hand" FontWeight="Normal"
+                                                    Command="{Binding DataContext.OpenNotificationCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                    CommandParameter="{Binding}"
+                                                    ToolTip="Click to read this message">
+                                                <!-- Own template: the shared button styles centre their content, which would
+                                                     push short messages to the middle of the row. -->
+                                                <Button.Template>
+                                                    <ControlTemplate TargetType="Button">
+                                                        <Border x:Name="Bd" Background="{StaticResource ControlBrush}" BorderBrush="{StaticResource BorderBrush2}"
+                                                                BorderThickness="1" CornerRadius="6" Padding="10,8">
+                                                            <ContentPresenter />
+                                                        </Border>
+                                                        <ControlTemplate.Triggers>
+                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource ControlHoverBrush}" />
+                                                            </Trigger>
+                                                        </ControlTemplate.Triggers>
+                                                    </ControlTemplate>
+                                                </Button.Template>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="14" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Ellipse Grid.Column="0" Width="8" Height="8" Fill="#E5484D" VerticalAlignment="Top" Margin="0,5,0,0">
+                                                        <Ellipse.Style>
+                                                            <Style TargetType="Ellipse">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsRead}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Hidden" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Ellipse.Style>
+                                                    </Ellipse>
+                                                    <StackPanel Grid.Column="1">
+                                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding Message}" FontSize="11.5" Foreground="{StaticResource SubtleTextBrush}"
+                                                                   TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+                                                    </StackPanel>
+                                                    <TextBlock Grid.Column="2" Text="{Binding TimeText}" FontSize="11" Foreground="{StaticResource SubtleTextBrush}"
+                                                               Margin="10,0,0,0" VerticalAlignment="Top" />
+                                                </Grid>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </StackPanel>
+                    </Border>
+                </Popup>
             </Grid>
         </Grid>
 
@@ -636,5 +737,37 @@
                 <components:BucketView />
             </TabItem>
         </TabControl>
+
+        <!-- Popups: top-right, over everything else (declared last). Each stays 30 seconds, then
+             moves to the notification list; the ✕ closes it early. The list itself has no
+             background, so it never blocks clicks on the page underneath. -->
+        <ItemsControl Grid.Row="0" Grid.RowSpan="4" ItemsSource="{Binding ToastNotifications}"
+                      HorizontalAlignment="Right" VerticalAlignment="Top" Width="380" Margin="0,56,0,0">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource AccentBrush}" BorderThickness="1"
+                            CornerRadius="10" Padding="14,12" Margin="0,0,0,10">
+                        <Border.Effect>
+                            <DropShadowEffect BlurRadius="18" ShadowDepth="3" Opacity="0.5" />
+                        </Border.Effect>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="{Binding Title}" FontWeight="Bold" Foreground="{StaticResource AccentHoverBrush}" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding Message}" TextWrapping="Wrap" Margin="0,6,0,0" />
+                                <TextBlock Text="{Binding TimeText}" FontSize="11" Foreground="{StaticResource SubtleTextBrush}" Margin="0,8,0,0" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="✕" Width="26" Height="26" Padding="0" VerticalAlignment="Top" Margin="10,0,0,0"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Command="{Binding DataContext.DismissToastCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                    CommandParameter="{Binding}" ToolTip="Close" />
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
     </Grid>
 </Window>
